@@ -155,13 +155,13 @@ def run_audit():
         
         logger.info(f"Starting multi-region audit for account {account_id} in regions: {regions}")
         
-        # Generate timestamp for default bucket name
+        # Generate timestamp for report naming
         timestamp = utcnow().strftime('%Y%m%d%H%M%S')
         
-        # S3 bucket name - use provided or generate default
+        # S3 bucket name - use provided or generate default (one bucket per account)
         s3_bucket = data.get('s3Bucket', '').strip()
         if not s3_bucket:
-            s3_bucket = f'aws-security-audit-{account_id}-{timestamp}'.lower()
+            s3_bucket = f'aws-security-audit-{account_id}'.lower()
         
         logger.info(f"Using S3 bucket: {s3_bucket}")
         
