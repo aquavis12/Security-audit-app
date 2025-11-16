@@ -108,10 +108,10 @@ App Runner requires an IAM role (`AppRunnerSecurityAuditRole`) with permission t
 
 ### IAM Role Setup (Customer/Target Account)
 
-Customers need to create an IAM role in their AWS account with the following configuration:
+Customers **MUST** create an IAM role named **`SecurityAuditRole`** in their AWS account with the following configuration:
 
 **Step 1: Create IAM Role**
-- Role name: `SecurityAuditRole` (or any name)
+- Role name: **`SecurityAuditRole`** (exact name required)
 - Role type: Cross-account role
 
 **Step 2: Trust Policy (Allow App Runner to assume this role)**
@@ -189,8 +189,13 @@ Customers need to create an IAM role in their AWS account with the following con
 
 **Step 4: Provide to Application**
 - Account ID (12 digits)
-- Role Name (e.g., SecurityAuditRole)
+- Role Name: **`SecurityAuditRole`** (must match exactly)
 - External ID (unique string for security)
+
+**Important Notes:**
+- ⚠️ Role name MUST be exactly `SecurityAuditRole` (case-sensitive)
+- ⚠️ External ID is mandatory for security
+- ⚠️ Trust policy must include the App Runner role ARN: `arn:aws:iam::183631310514:role/AppRunnerSecurityAuditRole`
 
 ## Usage
 
@@ -317,8 +322,8 @@ The `apprunner.yaml` file handles all configuration automatically.
 
 ### How It Works
 
-1. **Customer Setup**: Customer creates IAM role in their account with trust policy allowing your App Runner role
-2. **User Input**: Customer provides Account ID, Role Name, and External ID via web form
+1. **Customer Setup**: Customer creates IAM role named `SecurityAuditRole` in their account with trust policy allowing your App Runner role
+2. **User Input**: Customer provides Account ID, Role Name (`SecurityAuditRole`), and External ID via web form
 3. **Role Assumption**: App Runner assumes customer's role using STS
 4. **Audit Execution**: Security checks run in customer's account with assumed credentials
 5. **Report Storage**: PDF report created and stored in customer's S3 bucket

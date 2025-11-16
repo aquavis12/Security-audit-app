@@ -182,7 +182,7 @@ class AWSecurityAudit:
             return []
 
     def check_s3_public_buckets(self):
-        """Check for publicly accessible S3 buckets"""
+        """Check for publicly accessible S3 buckets - checks ACLs and Public Access Block settings"""
         try:
             logger.info("Checking S3 public buckets...")
             buckets = self.s3.list_buckets().get('Buckets', [])
@@ -194,18 +194,52 @@ class AWSecurityAudit:
                     if creation_date != 'Unknown':
                         creation_date = creation_date.strftime('%Y-%m-%d')
                     
-                    acl = self.s3.get_bucket_acl(Bucket=bucket_name)
-                    for grant in acl.get('Grants', []):
-                        grantee = grant.get('Grantee', {})
-                        if grantee.get('URI') == 'http://acs.amazonaws.com/groups/global/AllUsers':
-                            public_buckets.append({
-                                'BucketName': bucket_name,
-                                'Created': creation_date,
-                                'Access': 'Public (AllUsers)',
-                                'Permission': grant.get('Permission', 'Unknown'),
-                                'Recommendation': f'Remove public access from bucket: aws s3api put-public-access-block --bucket {bucket_name} --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"'
-                            })
-                            break
+                    is_public = False
+                    public_reason = []
+                    
+                    # Check 1: Public ACLs
+                    try:
+                        acl = self.s3.get_bucket_acl(Bucket=bucket_name)
+                        for grant in acl.get('Grants', []):
+                            grantee = grant.get('Grantee', {})
+                            if grantee.get('URI') == 'http://acs.amazonaws.com/groups/global/AllUsers':
+                                is_public = True
+                                public_reason.append(f"Public ACL ({grant.get('Permission', 'Unknown')})")
+                    except Exception:
+                        pass
+                    
+                    # Check 2: Public Access Block settings
+                    try:
+                        pab = self.s3.get_public_access_block(Bucket=bucket_name)
+                        config = pab.get('PublicAccessBlockConfiguration', {})
+                        
+                        if not config.get('BlockPublicAcls', False):
+                            is_public = True
+                            public_reason.append("BlockPublicAcls is disabled")
+                        if not config.get('IgnorePublicAcls', False):
+                            public_reason.append("IgnorePublicAcls is disabled")
+                        if not config.get('BlockPublicPolicy', False):
+                            is_public = True
+                            public_reason.append("BlockPublicPolicy is disabled")
+                        if not config.get('RestrictPublicBuckets', False):
+                            is_public = True
+                            public_reason.append("RestrictPublicBuckets is disabled")
+                    except ClientError as e:
+                        if e.response['Error']['Code'] == 'NoSuchPublicAccessBlockConfiguration':
+                            is_public = True
+                            public_reason.append("No Public Access Block configured")
+                    except Exception:
+                        pass
+                    
+                    if is_public:
+                        public_buckets.append({
+                            'BucketName': bucket_name,
+                            'Created': creation_date,
+                            'Access': 'Public',
+                            'Reason': ', '.join(public_reason),
+                            'Recommendation': f'Enable Public Access Block: aws s3api put-public-access-block --bucket {bucket_name} --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"'
+                        })
+                        
                 except Exception as e:
                     logger.debug(f"Could not check bucket {bucket['Name']}: {str(e)}")
                     continue
