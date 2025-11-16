@@ -411,9 +411,24 @@ class AWSecurityAudit:
             return []
 
     def check_aurora_encryption(self):
-        clusters = self.rds.describe_db_clusters().get('DBClusters', [])
-        unencrypted = [c['DBClusterIdentifier'] for c in clusters if not c.get('StorageEncrypted', False)]
-        return unencrypted
+        """Check for unencrypted Aurora clusters with details"""
+        try:
+            logger.info("Checking Aurora encryption...")
+            clusters = self.rds.describe_db_clusters().get('DBClusters', [])
+            unencrypted = []
+            for c in clusters:
+                if not c.get('StorageEncrypted', False):
+                    unencrypted.append({
+                        'ClusterIdentifier': c['DBClusterIdentifier'],
+                        'Engine': c.get('Engine', 'unknown'),
+                        'Status': c.get('Status', 'unknown'),
+                        'Members': len(c.get('DBClusterMembers', []))
+                    })
+            logger.info(f"Found {len(unencrypted)} unencrypted Aurora clusters")
+            return unencrypted
+        except Exception as e:
+            logger.error(f"Error checking Aurora clusters: {str(e)}")
+            return []
 
     def check_iam_roles_unused(self, days=120):
         """Check for unused IAM roles with detailed information"""
@@ -506,9 +521,23 @@ class AWSecurityAudit:
             return []
 
     def check_backup_vaults_encryption(self):
-        vaults = self.backup.list_backup_vaults().get('BackupVaultList', [])
-        unencrypted = [v['BackupVaultName'] for v in vaults if not v.get('EncryptionKeyArn')]
-        return unencrypted
+        """Check for unencrypted backup vaults with details"""
+        try:
+            logger.info("Checking Backup vaults...")
+            vaults = self.backup.list_backup_vaults().get('BackupVaultList', [])
+            unencrypted = []
+            for v in vaults:
+                if not v.get('EncryptionKeyArn'):
+                    unencrypted.append({
+                        'VaultName': v['BackupVaultName'],
+                        'VaultArn': v.get('BackupVaultArn', 'N/A'),
+                        'Recommendation': f'Enable KMS encryption for vault: {v["BackupVaultName"]}'
+                    })
+            logger.info(f"Found {len(unencrypted)} unencrypted backup vaults")
+            return unencrypted
+        except Exception as e:
+            logger.error(f"Error checking backup vaults: {str(e)}")
+            return []
 
     def check_ec2_imdsv2(self):
         """Check for EC2 instances not using IMDSv2"""
@@ -532,15 +561,31 @@ class AWSecurityAudit:
             return []
 
     def check_unused_key_pairs(self):
-        key_pairs = self.ec2.describe_key_pairs().get('KeyPairs', [])
-        reservations = self.ec2.describe_instances().get('Reservations', [])
-        used_key_names = set()
-        for res in reservations:
-            for inst in res.get('Instances', []):
-                if 'KeyName' in inst:
-                    used_key_names.add(inst['KeyName'])
-        unused_keys = [kp['KeyName'] for kp in key_pairs if kp['KeyName'] not in used_key_names]
-        return unused_keys
+        """Check for unused EC2 key pairs with details"""
+        try:
+            logger.info("Checking unused key pairs...")
+            key_pairs = self.ec2.describe_key_pairs().get('KeyPairs', [])
+            reservations = self.ec2.describe_instances().get('Reservations', [])
+            used_key_names = set()
+            for res in reservations:
+                for inst in res.get('Instances', []):
+                    if 'KeyName' in inst:
+                        used_key_names.add(inst['KeyName'])
+            
+            unused_keys = []
+            for kp in key_pairs:
+                if kp['KeyName'] not in used_key_names:
+                    unused_keys.append({
+                        'KeyName': kp['KeyName'],
+                        'KeyPairId': kp.get('KeyPairId', 'N/A'),
+                        'Fingerprint': kp.get('KeyFingerprint', 'N/A')[:20] + '...',
+                        'Recommendation': f'Delete unused key pair: aws ec2 delete-key-pair --key-name {kp["KeyName"]}'
+                    })
+            logger.info(f"Found {len(unused_keys)} unused key pairs")
+            return unused_keys
+        except Exception as e:
+            logger.error(f"Error checking key pairs: {str(e)}")
+            return []
 
     def check_ecs_encryption_issues(self):
         clusters = self.ecs.list_clusters().get('clusterArns', [])
