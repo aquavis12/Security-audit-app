@@ -35,16 +35,7 @@ def assume_role(account_id, role_name, external_id, region):
         if not external_id:
             raise ValueError("External ID is required for cross-account role assumption")
         
-        # Check if we have credentials available
-        try:
-            sts_client = boto3.client('sts', region_name=region)
-            # Try to get caller identity to verify credentials exist
-            identity = sts_client.get_caller_identity()
-            logger.info(f"Current AWS Account: {identity['Account']}, ARN: {identity['Arn']}")
-        except Exception as e:
-            logger.error(f"No AWS credentials available: {str(e)}")
-            raise ValueError("App Runner instance requires an IAM role with permission to assume the audit role. Please attach an IAM role to the App Runner service.")
-        
+        sts_client = boto3.client('sts', region_name=region)
         role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
         
         logger.info(f"Assuming role: {role_arn} with External ID")
@@ -245,25 +236,12 @@ def run_audit():
         
         logger.info(f"Multi-region audit completed: {summary['total']} findings across {len(regions)} regions")
         
-        # Generate PDF and upload to S3
+        # Generate PDF report
         logger.info("Generating PDF report for all regions...")
-        
-        # Use first region for PDF naming
         primary_region = regions[0]
         pdf_buffer = create_pdf_report(all_findings, primary_region)
         
-        # Create S3 bucket if needed (in audited account using assumed role credentials)
-        logger.info(f"Creating S3 bucket in audited account: {s3_bucket}")
-        create_s3_bucket_if_not_exists(s3_bucket, primary_region, credentials)
-        
-        # Upload PDF to S3 (in audited account using assumed role credentials)
-        pdf_timestamp = utcnow().strftime('%Y%m%dT%H%M%SZ')
-        object_key, presigned_url = upload_pdf_to_s3(pdf_buffer, primary_region, s3_bucket, pdf_timestamp, credentials=credentials)
-        
-        # Save metadata for future comparisons
-        save_report_metadata(s3_bucket, primary_region, all_findings, timestamp)
-        
-        logger.info(f"PDF uploaded to S3: {object_key}")
+        logger.info("Audit completed successfully")
         
         return jsonify({
             'success': True,
@@ -272,10 +250,8 @@ def run_audit():
             'findings_by_region': all_results,
             'timestamp': datetime.now(timezone.utc).isoformat(),
             'report': {
-                's3_bucket': s3_bucket,
-                's3_key': object_key,
-                'presigned_url': presigned_url,
-                'expires_in': 3600
+                'pdf_ready': True,
+                'filename': f'aws_audit_{timestamp}.pdf'
             }
         }), 200
         
@@ -283,20 +259,89 @@ def run_audit():
         logger.error(f"Audit failed: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/report/download', methods=['GET'])
+@app.route('/api/report/download', methods=['POST'])
 def download_report():
-    """Redirect to S3 presigned URL for PDF download"""
+    """Generate and download PDF report on-the-fly"""
     try:
-        presigned_url = request.args.get('url')
+        data = request.json
         
-        if not presigned_url:
-            return jsonify({'error': 'Missing presigned URL'}), 400
+        # Validate required fields
+        required_fields = ['accountId', 'roleName', 'externalId', 'selectedChecks']
+        for field in required_fields:
+            if field not in data or not data[field]:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
         
-        # Redirect to S3 presigned URL
-        return redirect(presigned_url)
+        account_id = data['accountId']
+        role_name = data['roleName']
+        external_id = data['externalId']
+        selected_checks = data['selectedChecks']
+        regions = data.get('regions', ['us-east-1'])
+        
+        if isinstance(regions, str):
+            regions = [regions]
+        
+        logger.info(f"Generating PDF report for account {account_id}")
+        
+        # Assume role
+        credentials = assume_role(account_id, role_name, external_id, regions[0])
+        
+        # Run audits for all regions
+        all_findings = []
+        for region in regions:
+            try:
+                audit = AWSecurityAudit(region, credentials)
+                
+                check_methods = {
+                    'EC2_SG_OPEN_0_0_0_0': audit.check_ec2_security_groups,
+                    'S3_PUBLIC_BUCKET': audit.check_s3_public_buckets,
+                    'S3_BUCKET_POLICY_EXCESSIVE_PERMISSIONS': audit.check_s3_bucket_policies_excessive_permissions,
+                    'IAM_USER_INACTIVE': audit.check_iam_users_inactive,
+                    'IAM_ACCESS_KEY_UNUSED': audit.check_iam_access_keys_unused,
+                    'EBS_UNENCRYPTED': audit.check_ebs_encryption,
+                    'RDS_UNENCRYPTED': audit.check_rds_encryption,
+                    'AURORA_UNENCRYPTED': audit.check_aurora_encryption,
+                    'IAM_ROLE_UNUSED': audit.check_iam_roles_unused,
+                    'BACKUP_VAULT_UNENCRYPTED': audit.check_backup_vaults_encryption,
+                    'EC2_NO_IMDSV2': audit.check_ec2_imdsv2,
+                    'EC2_UNUSED_KEY_PAIR': audit.check_unused_key_pairs,
+                    'ECS_ENCRYPTION_ISSUE': audit.check_ecs_encryption_issues,
+                    'API_GW_LOG_UNENCRYPTED': audit.check_api_gateway_log_encryption,
+                    'CLOUDFRONT_ENCRYPTION_ISSUE': audit.check_cloudfront_encryption,
+                    'RDS_AURORA_BACKUP_UNENCRYPTED': audit.check_rds_aurora_backups_encrypted,
+                    'UNUSED_KMS_KEYS': audit.check_unused_kms_keys,
+                    'UNUSED_SECRETS': audit.check_unused_secrets,
+                    'PARAMETER_STORE_ISSUE': audit.check_parameter_store
+                }
+                
+                report = {}
+                for check_id in selected_checks:
+                    if check_id in check_methods:
+                        try:
+                            report[check_id] = check_methods[check_id]()
+                        except Exception as e:
+                            logger.error(f"Check {check_id} failed: {str(e)}")
+                            report[check_id] = []
+                
+                scored_report = audit.score_findings(report)
+                all_findings.extend(scored_report)
+                
+            except Exception as e:
+                logger.error(f"Audit failed for region {region}: {str(e)}")
+        
+        # Generate PDF
+        pdf_buffer = create_pdf_report(all_findings, regions[0])
+        
+        # Return PDF as file download
+        pdf_buffer.seek(0)
+        return send_file(
+            pdf_buffer,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=f'aws_audit_{utcnow().strftime("%Y%m%d_%H%M%S")}.pdf'
+        )
         
     except Exception as e:
-        logger.error(f"Download redirect failed: {str(e)}")
+        logger.error(f"PDF generation failed: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':

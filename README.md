@@ -89,7 +89,8 @@ The Flask server serves both the REST API and the HTML frontend from `templates/
 
 ### AWS Credentials
 
-The application uses AWS STS to assume roles in target accounts. Configure your AWS credentials:
+#### Local Development
+Configure your AWS credentials for the account that will assume the audit role:
 
 ```bash
 aws configure
@@ -102,7 +103,10 @@ export AWS_SECRET_ACCESS_KEY=your_secret
 export AWS_DEFAULT_REGION=us-east-1
 ```
 
-### IAM Role Setup (Target Account)
+#### AWS App Runner Deployment
+No IAM role needed. App Runner generates PDF reports on-the-fly and serves them directly to users.
+
+### IAM Role Setup (Target/Audited Account)
 
 Create an IAM role in the account you want to audit:
 
@@ -246,6 +250,7 @@ Response includes:
    - Start: Runs gunicorn on port 8080
    - CPU: 1 vCPU
    - Memory: 2 GB
+   - **No IAM role needed** - PDF reports are generated on-the-fly
 
 The `apprunner.yaml` file handles all configuration automatically.
 
