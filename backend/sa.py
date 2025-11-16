@@ -897,7 +897,7 @@ def get_security_quote():
     ]
     return random.choice(quotes)
 
-def create_pdf_report(scored_report, region, comparison=None):
+def create_pdf_report(scored_report, region, comparison=None, credentials=None):
     """Create a colorful, well-structured PDF report with optional comparison"""
     from reportlab.lib.pagesizes import letter
     from reportlab.lib import colors
@@ -909,10 +909,26 @@ def create_pdf_report(scored_report, region, comparison=None):
     c = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
     
-    # Get account info and additional details
+    # Get account info and additional details using provided credentials
     try:
-        sts = boto3.client('sts')
-        iam = boto3.client('iam')
+        # Use provided credentials (from assumed role) or default credentials
+        if credentials:
+            sts = boto3.client(
+                'sts',
+                aws_access_key_id=credentials['aws_access_key_id'],
+                aws_secret_access_key=credentials['aws_secret_access_key'],
+                aws_session_token=credentials['aws_session_token']
+            )
+            iam = boto3.client(
+                'iam',
+                aws_access_key_id=credentials['aws_access_key_id'],
+                aws_secret_access_key=credentials['aws_secret_access_key'],
+                aws_session_token=credentials['aws_session_token']
+            )
+        else:
+            sts = boto3.client('sts')
+            iam = boto3.client('iam')
+            
         identity = sts.get_caller_identity()
         account_id = identity['Account']
         

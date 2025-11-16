@@ -241,7 +241,7 @@ def run_audit():
         # Generate PDF report and upload to customer's S3 bucket
         logger.info("Generating PDF report for all regions...")
         primary_region = regions[0]
-        pdf_buffer = create_pdf_report(all_findings, primary_region)
+        pdf_buffer = create_pdf_report(all_findings, primary_region, credentials=credentials)
         
         # S3 bucket name - use provided or generate default
         s3_bucket = data.get('s3Bucket', '').strip()
