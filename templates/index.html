@@ -815,59 +815,21 @@
                 </div>
             `).join('');
 
-            // Clear S3 info (not needed anymore)
-            s3Info.innerHTML = '';
+            // S3 info
+            if (data.report) {
+                s3Info.innerHTML = `<small style="color: #666;">📦 Stored in customer's S3: ${data.report.s3_bucket}</small>`;
+            }
 
             resultsDiv.classList.add('show');
             resultsDiv.scrollIntoView({ behavior: 'smooth' });
         }
 
         function downloadPDF() {
-            if (!currentResults) {
-                alert('No audit results available');
-                return;
+            if (currentResults?.report?.presigned_url) {
+                window.open(currentResults.report.presigned_url, '_blank');
+            } else {
+                alert('PDF report URL not available');
             }
-
-            const formData = {
-                accountId: document.getElementById('accountId').value,
-                roleName: document.getElementById('roleName').value,
-                externalId: document.getElementById('externalId').value,
-                regions: selectedRegions,
-                selectedChecks: selectedChecks
-            };
-
-            // Show loading
-            const btn = document.getElementById('downloadBtn');
-            const originalText = btn.textContent;
-            btn.textContent = 'Generating PDF...';
-            btn.disabled = true;
-
-            fetch(`${API_URL}/api/report/download`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(formData)
-            })
-            .then(response => {
-                if (!response.ok) throw new Error('PDF generation failed');
-                return response.blob();
-            })
-            .then(blob => {
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `aws_audit_${new Date().toISOString().split('T')[0]}.pdf`;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a);
-            })
-            .catch(err => {
-                alert('Failed to download PDF: ' + err.message);
-            })
-            .finally(() => {
-                btn.textContent = originalText;
-                btn.disabled = false;
-            });
         }
     </script>
 </body>

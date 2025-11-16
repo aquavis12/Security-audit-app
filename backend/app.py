@@ -236,12 +236,24 @@ def run_audit():
         
         logger.info(f"Multi-region audit completed: {summary['total']} findings across {len(regions)} regions")
         
-        # Generate PDF report
+        # Generate PDF report and upload to customer's S3 bucket
         logger.info("Generating PDF report for all regions...")
         primary_region = regions[0]
         pdf_buffer = create_pdf_report(all_findings, primary_region)
         
-        logger.info("Audit completed successfully")
+        # S3 bucket name - use provided or generate default
+        s3_bucket = data.get('s3Bucket', '').strip()
+        if not s3_bucket:
+            s3_bucket = f'aws-security-audit-{account_id}-{timestamp}'.lower()
+        
+        logger.info(f"Creating S3 bucket in customer account: {s3_bucket}")
+        create_s3_bucket_if_not_exists(s3_bucket, primary_region, credentials)
+        
+        # Upload PDF to customer's S3 bucket
+        pdf_timestamp = utcnow().strftime('%Y%m%dT%H%M%SZ')
+        object_key, presigned_url = upload_pdf_to_s3(pdf_buffer, primary_region, s3_bucket, pdf_timestamp, credentials=credentials)
+        
+        logger.info(f"PDF uploaded to customer's S3: {object_key}")
         
         return jsonify({
             'success': True,
@@ -250,8 +262,10 @@ def run_audit():
             'findings_by_region': all_results,
             'timestamp': datetime.now(timezone.utc).isoformat(),
             'report': {
-                'pdf_ready': True,
-                'filename': f'aws_audit_{timestamp}.pdf'
+                's3_bucket': s3_bucket,
+                's3_key': object_key,
+                'presigned_url': presigned_url,
+                'expires_in': 3600
             }
         }), 200
         
