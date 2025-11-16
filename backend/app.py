@@ -35,7 +35,16 @@ def assume_role(account_id, role_name, external_id, region):
         if not external_id:
             raise ValueError("External ID is required for cross-account role assumption")
         
-        sts_client = boto3.client('sts')
+        # Check if we have credentials available
+        try:
+            sts_client = boto3.client('sts', region_name=region)
+            # Try to get caller identity to verify credentials exist
+            identity = sts_client.get_caller_identity()
+            logger.info(f"Current AWS Account: {identity['Account']}, ARN: {identity['Arn']}")
+        except Exception as e:
+            logger.error(f"No AWS credentials available: {str(e)}")
+            raise ValueError("App Runner instance requires an IAM role with permission to assume the audit role. Please attach an IAM role to the App Runner service.")
+        
         role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
         
         logger.info(f"Assuming role: {role_arn} with External ID")
@@ -47,6 +56,7 @@ def assume_role(account_id, role_name, external_id, region):
         )
         
         credentials = response['Credentials']
+        logger.info(f"Successfully assumed role: {role_arn}")
         return {
             'aws_access_key_id': credentials['AccessKeyId'],
             'aws_secret_access_key': credentials['SecretAccessKey'],
@@ -166,10 +176,7 @@ def run_audit():
         # Assume role once (valid for all regions)
         credentials = assume_role(account_id, role_name, external_id, regions[0])
         
-        # Configure boto3 with assumed role credentials
-        os.environ['AWS_ACCESS_KEY_ID'] = credentials['aws_access_key_id']
-        os.environ['AWS_SECRET_ACCESS_KEY'] = credentials['aws_secret_access_key']
-        os.environ['AWS_SESSION_TOKEN'] = credentials['aws_session_token']
+        logger.info("Successfully obtained credentials for audited account")
         
         # Run audits for all regions
         all_results = {}
@@ -179,8 +186,8 @@ def run_audit():
             logger.info(f"Running audit for region: {region}")
             
             try:
-                # Initialize audit for this region
-                audit = AWSecurityAudit(region)
+                # Initialize audit for this region with assumed role credentials
+                audit = AWSecurityAudit(region, credentials)
                 
                 # Run selected checks
                 check_methods = {
@@ -245,13 +252,13 @@ def run_audit():
         primary_region = regions[0]
         pdf_buffer = create_pdf_report(all_findings, primary_region)
         
-        # Create S3 bucket if needed
-        logger.info(f"Creating S3 bucket: {s3_bucket}")
-        create_s3_bucket_if_not_exists(s3_bucket, primary_region)
+        # Create S3 bucket if needed (in audited account using assumed role credentials)
+        logger.info(f"Creating S3 bucket in audited account: {s3_bucket}")
+        create_s3_bucket_if_not_exists(s3_bucket, primary_region, credentials)
         
-        # Upload PDF to S3
+        # Upload PDF to S3 (in audited account using assumed role credentials)
         pdf_timestamp = utcnow().strftime('%Y%m%dT%H%M%SZ')
-        object_key, presigned_url = upload_pdf_to_s3(pdf_buffer, primary_region, s3_bucket, pdf_timestamp)
+        object_key, presigned_url = upload_pdf_to_s3(pdf_buffer, primary_region, s3_bucket, pdf_timestamp, credentials=credentials)
         
         # Save metadata for future comparisons
         save_report_metadata(s3_bucket, primary_region, all_findings, timestamp)

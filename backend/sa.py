@@ -94,22 +94,31 @@ AWS_SECURITY_REFERENCES = {
 }
 
 class AWSecurityAudit:
-    def __init__(self, region_name):
+    def __init__(self, region_name, credentials=None):
         self.region = region_name
         try:
-            self.ec2 = boto3.client('ec2', region_name=region_name)
-            self.iam = boto3.client('iam')
-            self.s3 = boto3.client('s3')
-            self.rds = boto3.client('rds', region_name=region_name)
-            self.backup = boto3.client('backup', region_name=region_name)
-            self.logs = boto3.client('logs', region_name=region_name)
-            self.ecr = boto3.client('ecr', region_name=region_name)
-            self.ecs = boto3.client('ecs', region_name=region_name)
-            self.apigw = boto3.client('apigateway', region_name=region_name)
-            self.kms = boto3.client('kms', region_name=region_name)
-            self.secrets = boto3.client('secretsmanager', region_name=region_name)
-            self.ssm = boto3.client('ssm', region_name=region_name)
-            self.cloudfront = boto3.client('cloudfront')
+            # Use provided credentials (from assumed role) or default credentials
+            client_kwargs = {'region_name': region_name}
+            if credentials:
+                client_kwargs.update({
+                    'aws_access_key_id': credentials['aws_access_key_id'],
+                    'aws_secret_access_key': credentials['aws_secret_access_key'],
+                    'aws_session_token': credentials['aws_session_token']
+                })
+            
+            self.ec2 = boto3.client('ec2', **client_kwargs)
+            self.iam = boto3.client('iam', **{k: v for k, v in client_kwargs.items() if k != 'region_name'})
+            self.s3 = boto3.client('s3', **{k: v for k, v in client_kwargs.items() if k != 'region_name'})
+            self.rds = boto3.client('rds', **client_kwargs)
+            self.backup = boto3.client('backup', **client_kwargs)
+            self.logs = boto3.client('logs', **client_kwargs)
+            self.ecr = boto3.client('ecr', **client_kwargs)
+            self.ecs = boto3.client('ecs', **client_kwargs)
+            self.apigw = boto3.client('apigateway', **client_kwargs)
+            self.kms = boto3.client('kms', **client_kwargs)
+            self.secrets = boto3.client('secretsmanager', **client_kwargs)
+            self.ssm = boto3.client('ssm', **client_kwargs)
+            self.cloudfront = boto3.client('cloudfront', **{k: v for k, v in client_kwargs.items() if k != 'region_name'})
             logger.info(f"✅ AWS clients initialized for region: {region_name}")
         except Exception as e:
             logger.error(f"❌ Failed to initialize AWS clients: {str(e)}")
@@ -1584,10 +1593,21 @@ def create_pdf_report(scored_report, region, comparison=None):
     buffer.seek(0)
     return buffer
 
-def create_s3_bucket_if_not_exists(bucket_name, region):
-    """Create S3 bucket if it doesn't exist"""
+def create_s3_bucket_if_not_exists(bucket_name, region, credentials=None):
+    """Create S3 bucket if it doesn't exist in the audited account"""
     bucket_name = bucket_name.strip().lower()
-    s3 = boto3.client('s3', region_name=region)
+    
+    # Use provided credentials (from assumed role) or default credentials
+    if credentials:
+        s3 = boto3.client(
+            's3',
+            region_name=region,
+            aws_access_key_id=credentials['aws_access_key_id'],
+            aws_secret_access_key=credentials['aws_secret_access_key'],
+            aws_session_token=credentials['aws_session_token']
+        )
+    else:
+        s3 = boto3.client('s3', region_name=region)
     
     try:
         # Check if bucket exists
@@ -1644,10 +1664,21 @@ def create_s3_bucket_if_not_exists(bucket_name, region):
             logger.error(f"❌ Failed to create S3 bucket: {str(e)}")
             return False
 
-def upload_pdf_to_s3(pdf_buffer, region, bucket_name, timestamp=None, prefix='aws_audit_reports'):
-    """Upload PDF report to S3"""
+def upload_pdf_to_s3(pdf_buffer, region, bucket_name, timestamp=None, prefix='aws_audit_reports', credentials=None):
+    """Upload PDF report to S3 in the audited account"""
     bucket_name = bucket_name.strip().lower()
-    s3 = boto3.client('s3', region_name=region)
+    
+    # Use provided credentials (from assumed role) or default credentials
+    if credentials:
+        s3 = boto3.client(
+            's3',
+            region_name=region,
+            aws_access_key_id=credentials['aws_access_key_id'],
+            aws_secret_access_key=credentials['aws_secret_access_key'],
+            aws_session_token=credentials['aws_session_token']
+        )
+    else:
+        s3 = boto3.client('s3', region_name=region)
     if not timestamp:
         timestamp = utcnow().strftime('%Y%m%dT%H%M%SZ')
     object_key = f"{prefix}/{region}/aws_audit_{timestamp}.pdf"
