@@ -1,6 +1,6 @@
 # AWS Security Audit Application
 
-A comprehensive AWS security audit tool with a React frontend and Python backend. Audit multiple AWS regions from a single account with 19 security checks covering EC2, S3, IAM, RDS, and more.
+A comprehensive AWS security audit tool built with Flask and Python. Audit multiple AWS regions from a single account with 19 security checks covering EC2, S3, IAM, RDS, and more.
 
 ## Features
 
@@ -41,7 +41,6 @@ A comprehensive AWS security audit tool with a React frontend and Python backend
 ## Prerequisites
 
 - Python 3.11+
-- Node.js 18+
 - AWS Account with appropriate IAM permissions
 - AWS CLI configured (optional)
 
@@ -50,78 +49,41 @@ A comprehensive AWS security audit tool with a React frontend and Python backend
 ```
 aws-security-audit/
 ├── backend/
-│   ├── app.py              # Flask REST API
+│   ├── app.py              # Flask REST API & frontend server
 │   ├── sa.py               # Security audit logic
 │   ├── requirements.txt    # Python dependencies
 │   └── __init__.py
-├── frontend/
-│   ├── src/
-│   │   ├── App.js          # Main React component
-│   │   ├── App.css         # Styles
-│   │   ├── index.js        # React entry point
-│   │   └── index.css       # Global styles
-│   ├── public/
-│   │   └── index.html
-│   └── package.json
-├── docs/
-│   ├── AWS_Security_Audit_Architecture.png
-│   ├── BUSINESS_PROPOSAL_TEMPLATE.txt
-│   └── DOCKER_DEPLOYMENT.md
+├── templates/
+│   └── index.html          # Frontend HTML/CSS/JS
+├── apprunner.yaml          # AWS App Runner config
 ├── .gitignore
 └── README.md
 ```
 
 ## Local Development Setup
 
-### Backend Setup
+### Setup
 
 ```bash
 # Create virtual environment
-python -m venv backend/venv
+python -m venv venv
 
 # Activate virtual environment
 # On Windows:
-backend\venv\Scripts\activate
+venv\Scripts\activate
 # On macOS/Linux:
-source backend/venv/bin/activate
+source venv/bin/activate
 
 # Install dependencies
 pip install -r backend/requirements.txt
 
-# Run backend
-python backend/app.py
+# Run Flask development server
+python -m flask --app backend.app run --host 0.0.0.0 --port 8080
 ```
 
-Backend runs on `http://localhost:8080`
+Application runs on `http://localhost:8080`
 
-### Frontend Setup
-
-```bash
-# Install dependencies
-cd frontend
-npm install
-
-# Build for production
-npm run build
-
-# For development (separate terminal):
-npm start
-```
-
-Frontend development server runs on `http://localhost:3000`
-
-### Production Build
-
-```bash
-# Build frontend
-cd frontend
-npm run build
-
-# Backend serves built frontend automatically
-python backend/app.py
-```
-
-Access application at `http://localhost:8080`
+The Flask server serves both the REST API and the HTML frontend from `templates/index.html`.
 
 ## Configuration
 
@@ -255,13 +217,6 @@ Response includes:
 - Detailed findings by region
 - S3 bucket location and presigned URL for PDF
 
-## Performance Notes
-
-- **Single Region**: ~30 seconds
-- **Two Regions**: ~45 seconds
-- **Three Regions**: ~60 seconds
-- Max 3 regions recommended for optimal performance
-- Auditing 1 region at a time is fastest
 
 ## Security Best Practices
 
@@ -285,22 +240,15 @@ Response includes:
 
 1. Push code to GitHub
 2. Connect GitHub to App Runner
-3. Configure:
+3. App Runner automatically detects `apprunner.yaml` and deploys with:
    - Runtime: Python 3.11
-   - Build command: `pip install -r backend/requirements.txt`
-   - Start command: `gunicorn --bind 0.0.0.0:8080 backend.app:app`
-   - Port: 8080
+   - Build: Installs dependencies from `backend/requirements.txt`
+   - Start: Runs gunicorn on port 8080
    - CPU: 1 vCPU
    - Memory: 2 GB
 
-See `docs/DOCKER_DEPLOYMENT.md` for Docker deployment options.
+The `apprunner.yaml` file handles all configuration automatically.
 
-## Cost Estimation
-
-- **AWS App Runner**: $50-200/month (depending on usage)
-- **S3 Storage**: $5-10/month
-- **CloudWatch Logs**: $5-10/month
-- **Total**: ~$60-220/month
 
 ## Troubleshooting
 
@@ -322,11 +270,12 @@ See `docs/DOCKER_DEPLOYMENT.md` for Docker deployment options.
 - Run 1 region at a time for fastest results
 - Check AWS API rate limits
 
-## Documentation
+## Architecture
 
-- `docs/AWS_Security_Audit_Architecture.png` - System architecture diagram
-- `docs/BUSINESS_PROPOSAL_TEMPLATE.txt` - Business case and ROI analysis
-- `docs/DOCKER_DEPLOYMENT.md` - Docker deployment guide
+- **Frontend**: HTML/CSS/JavaScript served from Flask templates
+- **Backend**: Python Flask REST API
+- **Runtime**: Single Python 3.11 runtime
+- **Deployment**: AWS App Runner with automatic scaling
 
 ## Support
 
