@@ -89,5 +89,4 @@ Thumbs.db
 
 # Docker (if using)
 .dockerignore
-Dockerfile
 

@@ -6,15 +6,14 @@ Provides REST API for running security audits with cross-account role assumption
 import os
 import json
 import boto3
-from flask import Flask, request, jsonify, send_file, redirect
-from flask_cors import CORS
+from flask import Flask, request, jsonify, render_template, redirect
 from datetime import datetime, timezone
 import logging
 from io import BytesIO
 import sys
 
 # Import the security audit class from same directory
-from sa import (
+from .sa import (
     AWSecurityAudit, 
     create_pdf_report, 
     SEVERITY_MAP,
@@ -24,11 +23,8 @@ from sa import (
     utcnow
 )
 
-# Configure Flask to serve React frontend
-import os
-frontend_build_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frontend', 'build')
-app = Flask(__name__, static_folder=frontend_build_path, static_url_path='/')
-CORS(app)
+# Configure Flask with templates
+app = Flask(__name__, template_folder='../templates')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -61,21 +57,14 @@ def assume_role(account_id, role_name, external_id, region):
         raise
 
 @app.route('/')
-def serve_frontend():
-    """Serve React frontend"""
-    return app.send_static_file('index.html')
+def index():
+    """Serve main page"""
+    return render_template('index.html')
 
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
     return jsonify({'status': 'healthy', 'service': 'aws-security-audit'}), 200
-
-@app.errorhandler(404)
-def not_found(e):
-    """Serve React app for all non-API routes (SPA routing)"""
-    if request.path.startswith('/api/'):
-        return jsonify({'error': 'Not found'}), 404
-    return app.send_static_file('index.html')
 
 @app.route('/api/checks', methods=['GET'])
 def get_available_checks():

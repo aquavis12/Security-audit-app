@@ -1,18 +1,11 @@
 version: 1.0
-runtime: python3.11
+runtime: python3
 build:
   commands:
     build:
-      - echo "Installing Node.js for frontend build..."
-      - curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-      - apt-get install -y nodejs
-      - echo "Building React frontend..."
-      - cd frontend && npm install && npm run build && cd ..
-      - echo "Installing Python backend dependencies..."
       - pip install --upgrade pip
       - pip install -r backend/requirements.txt
 run:
-  runtime-version: 3.11
   command: gunicorn --bind 0.0.0.0:8080 --workers 2 --timeout 300 backend.app:app
   network:
     port: 8080
