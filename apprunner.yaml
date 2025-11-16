@@ -1,0 +1,38 @@
+version: 1.0
+runtime: python3
+build:
+  commands:
+    pre-build:
+      - echo "Installing Node.js for frontend build..."
+      - curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+      - apt-get install -y nodejs
+      - node --version
+      - npm --version
+    build:
+      - echo "Building React frontend..."
+      - cd frontend
+      - npm install
+      - npm run build
+      - cd ..
+      - echo "Frontend build completed"
+      - echo "Installing Python backend dependencies..."
+      - pip install --upgrade pip
+      - pip install -r backend/requirements.txt
+      - echo "Backend dependencies installed"
+    post-build:
+      - echo "Build completed successfully!"
+      - echo "Frontend: Static React app built"
+      - echo "Backend: Flask API with 19 security checks"
+run:
+  runtime-version: 3.11
+  command: gunicorn --bind 0.0.0.0:8080 --workers 2 --timeout 300 --access-logfile - --error-logfile - backend.app:app
+  network:
+    port: 8080
+    env: PORT
+  env:
+    - name: PORT
+      value: "8080"
+    - name: PYTHONUNBUFFERED
+      value: "1"
+    - name: PYTHONPATH
+      value: "."
