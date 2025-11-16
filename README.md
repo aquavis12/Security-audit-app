@@ -104,11 +104,39 @@ export AWS_DEFAULT_REGION=us-east-1
 ```
 
 #### AWS App Runner Deployment
-No IAM role needed. App Runner generates PDF reports on-the-fly and serves them directly to users.
+App Runner requires an IAM role (`AppRunnerSecurityAuditRole`) with permission to assume customer roles. This role is already created and attached to the service.
 
-### IAM Role Setup (Target/Audited Account)
+### IAM Role Setup (Customer/Target Account)
 
-Create an IAM role in the account you want to audit:
+Customers need to create an IAM role in their AWS account with the following configuration:
+
+**Step 1: Create IAM Role**
+- Role name: `SecurityAuditRole` (or any name)
+- Role type: Cross-account role
+
+**Step 2: Trust Policy (Allow App Runner to assume this role)**
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::183631310514:role/AppRunnerSecurityAuditRole"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": {
+          "sts:ExternalId": "YOUR_UNIQUE_EXTERNAL_ID"
+        }
+      }
+    }
+  ]
+}
+```
+
+**Step 3: Permissions Policy (Read-only audit + S3 for reports)**
 
 ```json
 {
@@ -139,32 +167,30 @@ Create an IAM role in the account you want to audit:
         "ssm:GetParameter*"
       ],
       "Resource": "*"
-    }
-  ]
-}
-```
-
-**Trust Relationship (REQUIRED):**
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
+    },
     {
       "Effect": "Allow",
-      "Principal": {
-        "AWS": "arn:aws:iam::YOUR_AUDIT_ACCOUNT_ID:root"
-      },
-      "Action": "sts:AssumeRole",
-      "Condition": {
-        "StringEquals": {
-          "sts:ExternalId": "YOUR_UNIQUE_EXTERNAL_ID"
-        }
-      }
+      "Action": [
+        "s3:CreateBucket",
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:PutBucketVersioning",
+        "s3:PutBucketEncryption",
+        "s3:PutPublicAccessBlock"
+      ],
+      "Resource": [
+        "arn:aws:s3:::aws-security-audit-*",
+        "arn:aws:s3:::aws-security-audit-*/*"
+      ]
     }
   ]
 }
 ```
+
+**Step 4: Provide to Application**
+- Account ID (12 digits)
+- Role Name (e.g., SecurityAuditRole)
+- External ID (unique string for security)
 
 ## Usage
 
@@ -250,7 +276,12 @@ Response includes:
    - Start: Runs gunicorn on port 8080
    - CPU: 1 vCPU
    - Memory: 2 GB
-   - **No IAM role needed** - PDF reports are generated on-the-fly
+
+4. **Attach IAM Role to App Runner** (Required):
+   - Role: `AppRunnerSecurityAuditRole`
+   - ARN: `arn:aws:iam::183631310514:role/AppRunnerSecurityAuditRole`
+   - Permission: Allows assuming `SecurityAuditRole` in customer accounts
+   - Go to App Runner → Security → Instance role → Select the role
 
 The `apprunner.yaml` file handles all configuration automatically.
 
@@ -280,7 +311,18 @@ The `apprunner.yaml` file handles all configuration automatically.
 - **Frontend**: HTML/CSS/JavaScript served from Flask templates
 - **Backend**: Python Flask REST API
 - **Runtime**: Single Python 3.11 runtime
-- **Deployment**: AWS App Runner with automatic scaling
+- **Deployment**: AWS App Runner with IAM role for cross-account access
+- **Authentication**: Cross-account role assumption with External ID
+- **Storage**: PDF reports stored in customer's S3 bucket (not in app account)
+
+### How It Works
+
+1. **Customer Setup**: Customer creates IAM role in their account with trust policy allowing your App Runner role
+2. **User Input**: Customer provides Account ID, Role Name, and External ID via web form
+3. **Role Assumption**: App Runner assumes customer's role using STS
+4. **Audit Execution**: Security checks run in customer's account with assumed credentials
+5. **Report Storage**: PDF report created and stored in customer's S3 bucket
+6. **Download**: Customer downloads report via presigned S3 URL (expires in 1 hour)
 
 ## Support
 
