@@ -78,7 +78,8 @@ SEVERITY_MAP = {
     'RDS_AURORA_BACKUP_UNENCRYPTED': 3,
     'UNUSED_KMS_KEYS': 0,
     'UNUSED_SECRETS': 1,
-    'PARAMETER_STORE_ISSUE': 1
+    'PARAMETER_STORE_ISSUE': 1,
+    'AMI_UNENCRYPTED': 2
 }
 
 # AWS Security Best Practices References
@@ -558,6 +559,42 @@ class AWSecurityAudit:
             return instances_no_imds
         except Exception as e:
             logger.error(f"Error checking IMDSv2: {str(e)}")
+            return []
+
+    def check_ami_encryption(self):
+        """Check for unencrypted AMIs"""
+        try:
+            logger.info("Checking AMI encryption...")
+            # Get AMIs owned by the account
+            images = self.ec2.describe_images(Owners=['self']).get('Images', [])
+            unencrypted_amis = []
+            
+            for img in images:
+                # Check if any block device mapping has unencrypted snapshots
+                is_encrypted = True
+                unencrypted_volumes = []
+                
+                for bdm in img.get('BlockDeviceMappings', []):
+                    if 'Ebs' in bdm:
+                        ebs = bdm['Ebs']
+                        if not ebs.get('Encrypted', False):
+                            is_encrypted = False
+                            unencrypted_volumes.append(bdm.get('DeviceName', 'unknown'))
+                
+                if not is_encrypted:
+                    unencrypted_amis.append({
+                        'ImageId': img['ImageId'],
+                        'Name': img.get('Name', 'N/A'),
+                        'CreationDate': img.get('CreationDate', 'N/A')[:10],
+                        'State': img.get('State', 'unknown'),
+                        'UnencryptedVolumes': ', '.join(unencrypted_volumes),
+                        'Recommendation': f'Create encrypted copy: aws ec2 copy-image --source-image-id {img["ImageId"]} --source-region {self.region} --name {img.get("Name", "encrypted")}-encrypted --encrypted'
+                    })
+            
+            logger.info(f"Found {len(unencrypted_amis)} unencrypted AMIs")
+            return unencrypted_amis
+        except Exception as e:
+            logger.error(f"Error checking AMI encryption: {str(e)}")
             return []
 
     def check_unused_key_pairs(self):
