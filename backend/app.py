@@ -243,10 +243,10 @@ def run_audit():
         primary_region = regions[0]
         pdf_buffer = create_pdf_report(all_findings, primary_region, credentials=credentials)
         
-        # S3 bucket name - use provided or generate default
+        # S3 bucket name - use provided or generate default (one bucket per account)
         s3_bucket = data.get('s3Bucket', '').strip()
         if not s3_bucket:
-            s3_bucket = f'aws-security-audit-{account_id}-{timestamp}'.lower()
+            s3_bucket = f'aws-security-audit-{account_id}'.lower()
         
         logger.info(f"Creating S3 bucket in customer account: {s3_bucket}")
         create_s3_bucket_if_not_exists(s3_bucket, primary_region, credentials)

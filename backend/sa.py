@@ -2033,9 +2033,9 @@ def main():
     bucket_name = input("Enter S3 bucket name for report storage (will be created if not exists): ").strip()
     
     if not bucket_name:
-        # Generate default bucket name
+        # Generate default bucket name (one bucket per account)
         account_id = boto3.client('sts').get_caller_identity()['Account']
-        bucket_name = f"aws-security-audit-{account_id}-{region}"
+        bucket_name = f"aws-security-audit-{account_id}"
         print(f"✨ Using default bucket name: {bucket_name}")
     
     parallel = input("Run checks in parallel? (y/n, default=y): ").strip().lower() != 'n'
