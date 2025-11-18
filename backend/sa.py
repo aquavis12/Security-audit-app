@@ -60,26 +60,38 @@ def utcnow():
     return datetime.now(timezone.utc)
 
 # Severity levels for prioritization
+# 3 = Critical, 2 = High, 1 = Medium, 0 = Low
 SEVERITY_MAP = {
     'EC2_SG_OPEN_0_0_0_0': 3,
     'S3_PUBLIC_BUCKET': 3,
-    'IAM_USER_INACTIVE': 1,
-    'IAM_ACCESS_KEY_UNUSED': 1,
+    'S3_BUCKET_POLICY_EXCESSIVE_PERMISSIONS': 2,
+    'S3_VERSIONING_DISABLED': 0,
+    'IAM_USER_INACTIVE': 3,
+    'IAM_ACCESS_KEY_UNUSED': 2,
+    'IAM_ROLE_UNUSED': 0,
     'EBS_UNENCRYPTED': 2,
     'RDS_UNENCRYPTED': 2,
+    'RDS_PUBLIC_ACCESS': 3,
     'AURORA_UNENCRYPTED': 2,
-    'IAM_ROLE_UNUSED': 0,
+    'RDS_AURORA_BACKUP_UNENCRYPTED': 3,
+    'ROOT_MFA_DISABLED': 3,
     'BACKUP_VAULT_UNENCRYPTED': 2,
     'EC2_NO_IMDSV2': 2,
     'EC2_UNUSED_KEY_PAIR': 1,
+    'AMI_UNENCRYPTED': 2,
     'ECS_ENCRYPTION_ISSUE': 2,
     'API_GW_LOG_UNENCRYPTED': 2,
     'CLOUDFRONT_ENCRYPTION_ISSUE': 2,
-    'RDS_AURORA_BACKUP_UNENCRYPTED': 3,
     'UNUSED_KMS_KEYS': 0,
     'UNUSED_SECRETS': 1,
     'PARAMETER_STORE_ISSUE': 1,
-    'AMI_UNENCRYPTED': 2
+    'VPC_NO_FLOW_LOGS': 1,
+    'LAMBDA_PUBLIC_ACCESS': 3,
+    'ELB_NO_LOGGING': 1,
+    'SNS_UNENCRYPTED': 2,
+    'SQS_UNENCRYPTED': 2,
+    'CLOUDTRAIL_ISSUES': 3,
+    'EC2_PUBLIC_IP': 2
 }
 
 # AWS Security Best Practices References
@@ -171,8 +183,7 @@ class AWSecurityAudit:
                                 'Port': f"{from_port}-{to_port}" if from_port != to_port else str(from_port),
                                 'Protocol': protocol,
                                 'VpcId': vpc_id,
-                                'Description': sg.get('Description', 'No description')[:50],
-                                'Remediation': f'aws ec2 revoke-security-group-ingress --group-id {sg_id} --protocol {protocol} --port {from_port} --cidr 0.0.0.0/0'
+                                'Description': sg.get('Description', 'No description')[:50]
                             })
                             break
             
@@ -237,8 +248,7 @@ class AWSecurityAudit:
                             'BucketName': bucket_name,
                             'Created': creation_date,
                             'Access': 'Public',
-                            'Reason': ', '.join(public_reason),
-                            'Recommendation': f'Enable Public Access Block: aws s3api put-public-access-block --bucket {bucket_name} --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"'
+                            'Reason': ', '.join(public_reason)
                         })
                         
                 except Exception as e:
@@ -285,8 +295,7 @@ class AWSecurityAudit:
                                     'BucketName': bucket['Name'],
                                     'Created': creation_date,
                                     'Risk': ', '.join(risk_reason),
-                                    'Policy': json.dumps(stmt, indent=2)[:200],
-                                    'Remediation': f'Review and restrict bucket policy for {bucket["Name"]} - Remove wildcard permissions'
+                                    'Policy': json.dumps(stmt, indent=2)[:100]
                                 })
                                 break
                 except ClientError as e:
@@ -531,8 +540,7 @@ class AWSecurityAudit:
                 if not v.get('EncryptionKeyArn'):
                     unencrypted.append({
                         'VaultName': v['BackupVaultName'],
-                        'VaultArn': v.get('BackupVaultArn', 'N/A'),
-                        'Recommendation': f'Enable KMS encryption for vault: {v["BackupVaultName"]}'
+                        'VaultArn': v.get('BackupVaultArn', 'N/A')
                     })
             logger.info(f"Found {len(unencrypted)} unencrypted backup vaults")
             return unencrypted
@@ -587,8 +595,7 @@ class AWSecurityAudit:
                         'Name': img.get('Name', 'N/A'),
                         'CreationDate': img.get('CreationDate', 'N/A')[:10],
                         'State': img.get('State', 'unknown'),
-                        'UnencryptedVolumes': ', '.join(unencrypted_volumes),
-                        'Recommendation': f'Create encrypted copy: aws ec2 copy-image --source-image-id {img["ImageId"]} --source-region {self.region} --name {img.get("Name", "encrypted")}-encrypted --encrypted'
+                        'UnencryptedVolumes': ', '.join(unencrypted_volumes)
                     })
             
             logger.info(f"Found {len(unencrypted_amis)} unencrypted AMIs")
@@ -615,8 +622,7 @@ class AWSecurityAudit:
                     unused_keys.append({
                         'KeyName': kp['KeyName'],
                         'KeyPairId': kp.get('KeyPairId', 'N/A'),
-                        'Fingerprint': kp.get('KeyFingerprint', 'N/A')[:20] + '...',
-                        'Recommendation': f'Delete unused key pair: aws ec2 delete-key-pair --key-name {kp["KeyName"]}'
+                        'Fingerprint': kp.get('KeyFingerprint', 'N/A')[:20] + '...'
                     })
             logger.info(f"Found {len(unused_keys)} unused key pairs")
             return unused_keys
@@ -702,6 +708,293 @@ class AWSecurityAudit:
             logger.error(f"Error checking Secrets Manager: {str(e)}")
             return []
 
+    def check_vpc_flow_logs(self):
+        """Check for VPCs without flow logs enabled"""
+        try:
+            logger.info("Checking VPC flow logs...")
+            vpcs = self.ec2.describe_vpcs().get('Vpcs', [])
+            flow_logs = self.ec2.describe_flow_logs().get('FlowLogs', [])
+            
+            vpcs_with_logs = set([fl['ResourceId'] for fl in flow_logs])
+            vpcs_without_logs = []
+            
+            for vpc in vpcs:
+                vpc_id = vpc['VpcId']
+                if vpc_id not in vpcs_with_logs:
+                    vpcs_without_logs.append({
+                        'VpcId': vpc_id,
+                        'IsDefault': vpc.get('IsDefault', False),
+                        'CidrBlock': vpc.get('CidrBlock', 'N/A')
+                    })
+            
+            logger.info(f"Found {len(vpcs_without_logs)} VPCs without flow logs")
+            return vpcs_without_logs
+        except Exception as e:
+            logger.error(f"Error checking VPC flow logs: {str(e)}")
+            return []
+    
+    def check_lambda_public_access(self):
+        """Check for Lambda functions with public access"""
+        try:
+            logger.info("Checking Lambda public access...")
+            lambda_client = boto3.client('lambda', region_name=self.region)
+            functions = lambda_client.list_functions().get('Functions', [])
+            public_functions = []
+            
+            for func in functions:
+                try:
+                    policy = lambda_client.get_policy(FunctionName=func['FunctionName'])
+                    policy_doc = json.loads(policy['Policy'])
+                    
+                    for stmt in policy_doc.get('Statement', []):
+                        principal = stmt.get('Principal', {})
+                        if principal == '*' or (isinstance(principal, dict) and principal.get('AWS') == '*'):
+                            public_functions.append({
+                                'FunctionName': func['FunctionName'],
+                                'Runtime': func.get('Runtime', 'N/A'),
+                                'LastModified': func.get('LastModified', 'N/A')[:10]
+                            })
+                            break
+                except:
+                    continue
+            
+            logger.info(f"Found {len(public_functions)} Lambda functions with public access")
+            return public_functions
+        except Exception as e:
+            logger.error(f"Error checking Lambda functions: {str(e)}")
+            return []
+    
+    def check_elb_logging(self):
+        """Check for ELBs without access logging enabled"""
+        try:
+            logger.info("Checking ELB access logging...")
+            elb_client = boto3.client('elbv2', region_name=self.region)
+            load_balancers = elb_client.describe_load_balancers().get('LoadBalancers', [])
+            elbs_without_logging = []
+            
+            for lb in load_balancers:
+                lb_arn = lb['LoadBalancerArn']
+                attrs = elb_client.describe_load_balancer_attributes(LoadBalancerArn=lb_arn)
+                
+                logging_enabled = False
+                for attr in attrs.get('Attributes', []):
+                    if attr['Key'] == 'access_logs.s3.enabled' and attr['Value'] == 'true':
+                        logging_enabled = True
+                        break
+                
+                if not logging_enabled:
+                    elbs_without_logging.append({
+                        'LoadBalancerName': lb['LoadBalancerName'],
+                        'Type': lb.get('Type', 'N/A'),
+                        'Scheme': lb.get('Scheme', 'N/A')
+                    })
+            
+            logger.info(f"Found {len(elbs_without_logging)} ELBs without access logging")
+            return elbs_without_logging
+        except Exception as e:
+            logger.error(f"Error checking ELB logging: {str(e)}")
+            return []
+    
+    def check_sns_topic_encryption(self):
+        """Check for SNS topics without encryption"""
+        try:
+            logger.info("Checking SNS topic encryption...")
+            sns_client = boto3.client('sns', region_name=self.region)
+            topics = sns_client.list_topics().get('Topics', [])
+            unencrypted_topics = []
+            
+            for topic in topics:
+                topic_arn = topic['TopicArn']
+                try:
+                    attrs = sns_client.get_topic_attributes(TopicArn=topic_arn)
+                    if 'KmsMasterKeyId' not in attrs.get('Attributes', {}):
+                        unencrypted_topics.append({
+                            'TopicArn': topic_arn.split(':')[-1],
+                            'FullArn': topic_arn
+                        })
+                except:
+                    continue
+            
+            logger.info(f"Found {len(unencrypted_topics)} unencrypted SNS topics")
+            return unencrypted_topics
+        except Exception as e:
+            logger.error(f"Error checking SNS topics: {str(e)}")
+            return []
+    
+    def check_s3_versioning(self):
+        """Check for S3 buckets without versioning enabled"""
+        try:
+            logger.info("Checking S3 versioning...")
+            buckets = self.s3.list_buckets().get('Buckets', [])
+            no_versioning = []
+            
+            for bucket in buckets:
+                try:
+                    bucket_name = bucket['Name']
+                    versioning = self.s3.get_bucket_versioning(Bucket=bucket_name)
+                    status = versioning.get('Status', 'Disabled')
+                    
+                    if status != 'Enabled':
+                        no_versioning.append({
+                            'BucketName': bucket_name,
+                            'VersioningStatus': status,
+                            'Created': bucket.get('CreationDate', 'Unknown').strftime('%Y-%m-%d') if bucket.get('CreationDate') != 'Unknown' else 'Unknown'
+                        })
+                except Exception:
+                    continue
+            
+            logger.info(f"Found {len(no_versioning)} buckets without versioning")
+            return no_versioning
+        except Exception as e:
+            logger.error(f"Error checking S3 versioning: {str(e)}")
+            return []
+    
+    def check_rds_public_access(self):
+        """Check for RDS instances with public access"""
+        try:
+            logger.info("Checking RDS public access...")
+            instances = self.rds.describe_db_instances().get('DBInstances', [])
+            public_instances = []
+            
+            for db in instances:
+                if db.get('PubliclyAccessible', False):
+                    public_instances.append({
+                        'DBInstanceIdentifier': db['DBInstanceIdentifier'],
+                        'Engine': db.get('Engine', 'unknown'),
+                        'EngineVersion': db.get('EngineVersion', 'N/A'),
+                        'MultiAZ': db.get('MultiAZ', False)
+                    })
+            
+            logger.info(f"Found {len(public_instances)} publicly accessible RDS instances")
+            return public_instances
+        except Exception as e:
+            logger.error(f"Error checking RDS public access: {str(e)}")
+            return []
+    
+    def check_ec2_public_ip(self):
+        """Check for EC2 instances with public IPs in private subnets"""
+        try:
+            logger.info("Checking EC2 public IPs...")
+            reservations = self.ec2.describe_instances().get('Reservations', [])
+            public_instances = []
+            
+            for res in reservations:
+                for inst in res.get('Instances', []):
+                    if inst.get('State', {}).get('Name') == 'running':
+                        public_ip = inst.get('PublicIpAddress')
+                        if public_ip:
+                            public_instances.append({
+                                'InstanceId': inst['InstanceId'],
+                                'PublicIP': public_ip,
+                                'InstanceType': inst.get('InstanceType', 'N/A'),
+                                'SubnetId': inst.get('SubnetId', 'N/A')
+                            })
+            
+            logger.info(f"Found {len(public_instances)} EC2 instances with public IPs")
+            return public_instances
+        except Exception as e:
+            logger.error(f"Error checking EC2 public IPs: {str(e)}")
+            return []
+    
+    def check_root_account_mfa(self):
+        """Check if root account has MFA enabled"""
+        try:
+            logger.info("Checking root account MFA...")
+            iam = boto3.client('iam')
+            summary = iam.get_account_summary()
+            
+            account_mfa_enabled = summary['SummaryMap'].get('AccountMFAEnabled', 0)
+            
+            if account_mfa_enabled == 0:
+                return [{
+                    'Issue': 'Root account MFA not enabled',
+                    'Risk': 'Critical - Root account has full access',
+                    'AccountMFAEnabled': False
+                }]
+            
+            logger.info("Root account MFA is enabled")
+            return []
+        except Exception as e:
+            logger.error(f"Error checking root MFA: {str(e)}")
+            return []
+
+    def check_cloudtrail_logging(self):
+        """Check for CloudTrail logging and encryption issues"""
+        try:
+            logger.info("Checking CloudTrail logging...")
+            cloudtrail = boto3.client('cloudtrail', region_name=self.region)
+            trails = cloudtrail.describe_trails().get('trailList', [])
+            issues = []
+            
+            for trail in trails:
+                trail_name = trail['Name']
+                trail_arn = trail.get('TrailARN', '')
+                
+                # Get trail status
+                try:
+                    status = cloudtrail.get_trail_status(Name=trail_arn)
+                    is_logging = status.get('IsLogging', False)
+                except:
+                    is_logging = False
+                
+                # Check encryption
+                kms_key_id = trail.get('KmsKeyId', None)
+                
+                # Check log file validation
+                log_validation = trail.get('LogFileValidationEnabled', False)
+                
+                problems = []
+                if not is_logging:
+                    problems.append('Logging disabled')
+                if not kms_key_id:
+                    problems.append('Not encrypted')
+                if not log_validation:
+                    problems.append('No log validation')
+                
+                if problems:
+                    issues.append({
+                        'TrailName': trail_name,
+                        'IsLogging': is_logging,
+                        'Encrypted': bool(kms_key_id),
+                        'LogValidation': log_validation,
+                        'Issues': ', '.join(problems)
+                    })
+            
+            logger.info(f"Found {len(issues)} CloudTrail issues")
+            return issues
+        except Exception as e:
+            logger.error(f"Error checking CloudTrail: {str(e)}")
+            return []
+
+    def check_sqs_queue_encryption(self):
+        """Check for SQS queues without encryption"""
+        try:
+            logger.info("Checking SQS queue encryption...")
+            sqs_client = boto3.client('sqs', region_name=self.region)
+            queues = sqs_client.list_queues().get('QueueUrls', [])
+            unencrypted_queues = []
+            
+            for queue_url in queues:
+                try:
+                    attrs = sqs_client.get_queue_attributes(
+                        QueueUrl=queue_url,
+                        AttributeNames=['KmsMasterKeyId']
+                    )
+                    if 'KmsMasterKeyId' not in attrs.get('Attributes', {}):
+                        queue_name = queue_url.split('/')[-1]
+                        unencrypted_queues.append({
+                            'QueueName': queue_name,
+                            'QueueUrl': queue_url
+                        })
+                except:
+                    continue
+            
+            logger.info(f"Found {len(unencrypted_queues)} unencrypted SQS queues")
+            return unencrypted_queues
+        except Exception as e:
+            logger.error(f"Error checking SQS queues: {str(e)}")
+            return []
+
     def check_parameter_store(self, days=60):
         """Check for unused/stale Parameter Store parameters not modified in 60+ days"""
         try:
@@ -721,8 +1014,7 @@ class AWSecurityAudit:
                                     'Name': param['Name'],
                                     'Type': param.get('Type', 'Unknown'),
                                     'DaysOld': days_old,
-                                    'LastModified': last_mod.strftime('%Y-%m-%d'),
-                                    'Recommendation': f'Review and delete unused parameter: {param["Name"]}'
+                                    'LastModified': last_mod.strftime('%Y-%m-%d')
                                 })
                     except Exception:
                         continue
@@ -844,55 +1136,55 @@ def get_aws_documentation_url(check_name):
     return urls.get(check_name, 'https://aws.amazon.com/security/security-resources/')
 
 def get_security_quote():
-    """Get a random AWS security-related quote"""
+    """Get a random AWS Shared Responsibility Model security quote"""
     quotes = [
         {
-            'text': 'Security is job zero at AWS. We build security into everything we do, and we make it easy for customers to implement security best practices.',
-            'author': 'AWS Security Team'
-        },
-        {
-            'text': 'In AWS, security is a shared responsibility. AWS secures the cloud, you secure what you put in the cloud.',
+            'text': 'AWS Shared Responsibility: AWS secures the infrastructure. You secure your data, applications, and access controls.',
             'author': 'AWS Shared Responsibility Model'
         },
         {
-            'text': 'Encrypt everything. Use IAM roles, not keys. Enable MFA. Follow the principle of least privilege. These are not optional in AWS.',
-            'author': 'AWS Security Best Practices'
+            'text': 'Security OF the cloud is AWS responsibility. Security IN the cloud is YOUR responsibility.',
+            'author': 'AWS Shared Responsibility Model'
         },
         {
-            'text': 'The best time to implement AWS security controls was at launch. The second best time is now.',
-            'author': 'Cloud Security Wisdom'
+            'text': 'AWS manages physical security, network infrastructure, and hypervisor. You manage OS patches, encryption, IAM, and security groups.',
+            'author': 'AWS Shared Responsibility Model'
         },
         {
-            'text': 'An open security group to 0.0.0.0/0 is not a feature, it is a vulnerability waiting to be exploited.',
-            'author': 'AWS Security Audit'
+            'text': 'AWS provides the tools. You must configure them correctly. Encryption, MFA, and least privilege are YOUR responsibility.',
+            'author': 'AWS Shared Responsibility Model'
         },
         {
-            'text': 'Defense in depth: Use VPCs, security groups, NACLs, WAF, encryption, and monitoring. Layer your AWS security.',
-            'author': 'AWS Well-Architected Framework'
+            'text': 'CloudTrail logging, GuardDuty alerts, and Security Hub findings are useless if you do not act on them. Monitoring is YOUR responsibility.',
+            'author': 'AWS Shared Responsibility Model'
         },
         {
-            'text': 'Unused IAM credentials are like unlocked doors. Delete them before someone walks through.',
-            'author': 'AWS IAM Best Practices'
+            'text': 'AWS secures the hardware. You secure the data. Unencrypted data is YOUR risk, not AWS.',
+            'author': 'AWS Shared Responsibility Model'
         },
         {
-            'text': 'Enable CloudTrail, GuardDuty, and Security Hub. You cannot protect what you cannot see.',
-            'author': 'AWS Security Monitoring'
+            'text': 'Public S3 buckets, open security groups, and unused IAM keys are YOUR configuration choices. AWS provides the controls, you must use them.',
+            'author': 'AWS Shared Responsibility Model'
         },
         {
-            'text': 'Encryption at rest and in transit is not paranoia in AWS, it is compliance and common sense.',
-            'author': 'AWS Encryption Standards'
+            'text': 'AWS patches the hypervisor. You patch the OS. AWS secures the datacenter. You secure the application. Know your responsibilities.',
+            'author': 'AWS Shared Responsibility Model'
         },
         {
-            'text': 'Regular security audits are not about finding problems, they are about preventing disasters.',
-            'author': 'AWS Security Operations'
+            'text': 'Root account MFA, IAM password policies, and access key rotation are YOUR responsibility. AWS cannot enforce them for you.',
+            'author': 'AWS Shared Responsibility Model'
         },
         {
-            'text': 'IMDSv2 is not optional. SSRF attacks are real. Protect your EC2 instance metadata.',
-            'author': 'AWS EC2 Security'
+            'text': 'AWS provides VPCs, NACLs, and security groups. You must configure them correctly. Network security is a shared responsibility.',
+            'author': 'AWS Shared Responsibility Model'
         },
         {
-            'text': 'Public S3 buckets have caused more data breaches than any other AWS misconfiguration. Block public access by default.',
-            'author': 'AWS S3 Security'
+            'text': 'Backup encryption, RDS snapshots, and EBS volume encryption are YOUR choices. AWS provides the capability, you must enable it.',
+            'author': 'AWS Shared Responsibility Model'
+        },
+        {
+            'text': 'AWS secures the Lambda runtime. You secure the function code, IAM roles, and environment variables. Serverless security is shared.',
+            'author': 'AWS Shared Responsibility Model'
         }
     ]
     return random.choice(quotes)
@@ -1513,7 +1805,7 @@ def create_pdf_report(scored_report, region, comparison=None, credentials=None):
                         aws_url = 'https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucket-policies.html'
                     else:
                         # Public bucket
-                        item_text = f"• {item['BucketName']} | Created: {item.get('Created', 'Unknown')} | Access: {item.get('Access', 'Public')} | Permission: {item.get('Permission', 'Unknown')}"
+                        item_text = f"• {item['BucketName']} | Created: {item.get('Created', 'Unknown')} | Access: {item.get('Access', 'Public')}"
                         aws_url = 'https://docs.aws.amazon.com/AmazonS3/latest/userguide/security-best-practices.html'
                     c.drawString(70, y, item_text)
                     y -= 15
@@ -1590,6 +1882,84 @@ def create_pdf_report(scored_report, region, comparison=None, credentials=None):
                         
                         c.setFont("Helvetica", 10)
                         c.setFillColor(colors.HexColor('#424242'))
+                    continue
+                elif 'VpcId' in item:
+                    # VPC Flow Logs
+                    c.setFillColor(colors.HexColor('#f57c00'))
+                    default_text = " (Default VPC)" if item.get('IsDefault') else ""
+                    item_text = f"• VPC: {item['VpcId']}{default_text} | CIDR: {item.get('CidrBlock', 'N/A')}"
+                    c.drawString(70, y, item_text)
+                    y -= 15
+                    continue
+                elif 'FunctionName' in item and 'Runtime' in item:
+                    # Lambda Function
+                    c.setFillColor(colors.HexColor('#d32f2f'))
+                    item_text = f"• Function: {item['FunctionName']} | Runtime: {item.get('Runtime', 'N/A')} | Modified: {item.get('LastModified', 'N/A')}"
+                    c.drawString(70, y, item_text)
+                    y -= 15
+                    continue
+                elif 'TopicArn' in item and 'FullArn' in item:
+                    # SNS Topic
+                    c.setFillColor(colors.HexColor('#f57c00'))
+                    item_text = f"• SNS Topic: {item['TopicArn']}"
+                    c.drawString(70, y, item_text)
+                    y -= 15
+                    continue
+                elif 'QueueName' in item and 'QueueUrl' in item:
+                    # SQS Queue
+                    c.setFillColor(colors.HexColor('#f57c00'))
+                    item_text = f"• SQS Queue: {item['QueueName']}"
+                    c.drawString(70, y, item_text)
+                    y -= 15
+                    continue
+                elif 'TrailName' in item and 'Issues' in item:
+                    # CloudTrail
+                    c.setFillColor(colors.HexColor('#d32f2f'))
+                    logging_status = "✓ Enabled" if item.get('IsLogging') else "✗ Disabled"
+                    encryption_status = "✓ Encrypted" if item.get('Encrypted') else "✗ Not Encrypted"
+                    validation_status = "✓ Validated" if item.get('LogValidation') else "✗ No Validation"
+                    item_text = f"• Trail: {item['TrailName']} | Logging: {logging_status} | Encryption: {encryption_status} | Validation: {validation_status}"
+                    c.drawString(70, y, item_text)
+                    y -= 15
+                    
+                    # Show issues on next line
+                    if y > 120:
+                        c.setFont("Helvetica-Oblique", 9)
+                        c.setFillColor(colors.HexColor('#d32f2f'))
+                        c.drawString(90, y, f"Issues: {item['Issues']}")
+                        y -= 13
+                        c.setFont("Helvetica", 10)
+                        c.setFillColor(colors.HexColor('#424242'))
+                    continue
+                elif 'ImageId' in item and 'UnencryptedVolumes' in item:
+                    # AMI
+                    c.setFillColor(colors.HexColor('#f57c00'))
+                    item_text = f"• AMI: {item['ImageId']} | Name: {item.get('Name', 'N/A')} | Created: {item.get('CreationDate', 'N/A')} | State: {item.get('State', 'N/A')}"
+                    c.drawString(70, y, item_text)
+                    y -= 15
+                    
+                    # Show unencrypted volumes on next line
+                    if y > 120:
+                        c.setFont("Helvetica-Oblique", 9)
+                        c.setFillColor(colors.HexColor('#f57c00'))
+                        c.drawString(90, y, f"Unencrypted Volumes: {item['UnencryptedVolumes']}")
+                        y -= 13
+                        c.setFont("Helvetica", 10)
+                        c.setFillColor(colors.HexColor('#424242'))
+                    continue
+                elif 'LoadBalancerName' in item and 'Type' in item:
+                    # ELB
+                    c.setFillColor(colors.HexColor('#f57c00'))
+                    item_text = f"• Load Balancer: {item['LoadBalancerName']} | Type: {item.get('Type', 'N/A')} | Scheme: {item.get('Scheme', 'N/A')}"
+                    c.drawString(70, y, item_text)
+                    y -= 15
+                    continue
+                elif 'Issue' in item and 'Risk' in item:
+                    # Root MFA
+                    c.setFillColor(colors.HexColor('#d32f2f'))
+                    item_text = f"• {item['Issue']} | Risk: {item.get('Risk', 'Unknown')}"
+                    c.drawString(70, y, item_text)
+                    y -= 15
                     continue
                 else:
                     c.setFillColor(colors.HexColor('#424242'))
@@ -2104,7 +2474,7 @@ def main():
                             aws_url = 'https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucket-policies.html'
                         else:
                             # Public bucket
-                            print(f"  • {item['BucketName']} | Created: {item.get('Created', 'Unknown')} | Access: {item.get('Access', 'Public')} | Permission: {item.get('Permission', 'Unknown')}")
+                            print(f"  • {item['BucketName']} | Created: {item.get('Created', 'Unknown')} | Access: {item.get('Access', 'Public')}")
                             aws_url = 'https://docs.aws.amazon.com/AmazonS3/latest/userguide/security-best-practices.html'
                         # Check both Recommendation and Remediation fields
                         remediation_text = item.get('Recommendation') or item.get('Remediation')

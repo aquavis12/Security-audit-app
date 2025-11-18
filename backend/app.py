@@ -69,29 +69,57 @@ def health_check():
 
 @app.route('/api/checks', methods=['GET'])
 def get_available_checks():
-    """Return list of available security checks"""
-    checks = [
-        {'id': 'EC2_SG_OPEN_0_0_0_0', 'name': 'EC2 Security Groups Open to Internet', 'severity': 'Critical'},
-        {'id': 'S3_PUBLIC_BUCKET', 'name': 'S3 Public Buckets', 'severity': 'Critical'},
-        {'id': 'S3_BUCKET_POLICY_EXCESSIVE_PERMISSIONS', 'name': 'S3 Excessive Bucket Policies', 'severity': 'High'},
-        {'id': 'IAM_USER_INACTIVE', 'name': 'IAM Inactive Users', 'severity': 'Low'},
-        {'id': 'IAM_ACCESS_KEY_UNUSED', 'name': 'IAM Unused Access Keys', 'severity': 'Low'},
-        {'id': 'EBS_UNENCRYPTED', 'name': 'EBS Unencrypted Volumes', 'severity': 'High'},
-        {'id': 'RDS_UNENCRYPTED', 'name': 'RDS Unencrypted Instances', 'severity': 'High'},
-        {'id': 'AURORA_UNENCRYPTED', 'name': 'Aurora Unencrypted Clusters', 'severity': 'High'},
-        {'id': 'IAM_ROLE_UNUSED', 'name': 'IAM Unused Roles', 'severity': 'Low'},
-        {'id': 'BACKUP_VAULT_UNENCRYPTED', 'name': 'Backup Vault Unencrypted', 'severity': 'High'},
-        {'id': 'EC2_NO_IMDSV2', 'name': 'EC2 Not Using IMDSv2', 'severity': 'High'},
-        {'id': 'EC2_UNUSED_KEY_PAIR', 'name': 'EC2 Unused Key Pairs', 'severity': 'Low'},
-        {'id': 'AMI_UNENCRYPTED', 'name': 'AMI Unencrypted Images', 'severity': 'High'},
-        {'id': 'ECS_ENCRYPTION_ISSUE', 'name': 'ECS Encryption Issues', 'severity': 'High'},
-        {'id': 'API_GW_LOG_UNENCRYPTED', 'name': 'API Gateway Logs Unencrypted', 'severity': 'High'},
-        {'id': 'CLOUDFRONT_ENCRYPTION_ISSUE', 'name': 'CloudFront HTTPS Issues', 'severity': 'High'},
-        {'id': 'RDS_AURORA_BACKUP_UNENCRYPTED', 'name': 'RDS/Aurora Backup Unencrypted', 'severity': 'Critical'},
-        {'id': 'UNUSED_KMS_KEYS', 'name': 'Unused KMS Keys', 'severity': 'Low'},
-        {'id': 'UNUSED_SECRETS', 'name': 'Unused Secrets', 'severity': 'Low'},
-        {'id': 'PARAMETER_STORE_ISSUE', 'name': 'Parameter Store Unused Parameters', 'severity': 'Low'}
-    ]
+    """Return categorized list of security checks"""
+    checks = {
+        'Network Security': [
+            {'id': 'EC2_SG_OPEN_0_0_0_0', 'name': 'Open Security Groups', 'severity': 'Critical', 'description': 'Security groups allowing 0.0.0.0/0 access'},
+            {'id': 'EC2_NO_IMDSV2', 'name': 'IMDSv2 Not Enforced', 'severity': 'High', 'description': 'EC2 instances not using IMDSv2'},
+        ],
+        'Storage Security': [
+            {'id': 'S3_PUBLIC_BUCKET', 'name': 'Public S3 Buckets', 'severity': 'Critical', 'description': 'S3 buckets with public access'},
+            {'id': 'S3_BUCKET_POLICY_EXCESSIVE_PERMISSIONS', 'name': 'Excessive S3 Policies', 'severity': 'High', 'description': 'S3 bucket policies with wildcard permissions'},
+            {'id': 'EBS_UNENCRYPTED', 'name': 'Unencrypted EBS Volumes', 'severity': 'High', 'description': 'EBS volumes without encryption'},
+        ],
+        'Database Security': [
+            {'id': 'RDS_PUBLIC_ACCESS', 'name': 'Public RDS Instances', 'severity': 'Critical', 'description': 'RDS instances publicly accessible'},
+            {'id': 'RDS_UNENCRYPTED', 'name': 'Unencrypted RDS', 'severity': 'High', 'description': 'RDS instances without encryption'},
+            {'id': 'AURORA_UNENCRYPTED', 'name': 'Unencrypted Aurora', 'severity': 'High', 'description': 'Aurora clusters without encryption'},
+            {'id': 'RDS_AURORA_BACKUP_UNENCRYPTED', 'name': 'Unencrypted Backups', 'severity': 'Critical', 'description': 'Database backups without encryption'},
+        ],
+        'Identity & Access': [
+            {'id': 'ROOT_MFA_DISABLED', 'name': 'Root MFA Disabled', 'severity': 'Critical', 'description': 'Root account without MFA enabled'},
+            {'id': 'IAM_USER_INACTIVE', 'name': 'Inactive IAM Users', 'severity': 'Critical', 'description': 'Users inactive for 60+ days'},
+            {'id': 'IAM_ACCESS_KEY_UNUSED', 'name': 'Unused Access Keys', 'severity': 'High', 'description': 'Access keys unused for 90+ days'},
+            {'id': 'IAM_ROLE_UNUSED', 'name': 'Unused IAM Roles', 'severity': 'Low', 'description': 'Roles unused for 120+ days'},
+        ],
+        'Compute Security': [
+            {'id': 'AMI_UNENCRYPTED', 'name': 'Unencrypted AMIs', 'severity': 'High', 'description': 'AMIs with unencrypted snapshots'},
+            {'id': 'EC2_UNUSED_KEY_PAIR', 'name': 'Unused Key Pairs', 'severity': 'Medium', 'description': 'EC2 key pairs not attached to instances'},
+            {'id': 'ECS_ENCRYPTION_ISSUE', 'name': 'ECS Encryption Issues', 'severity': 'High', 'description': 'ECS tasks with encryption concerns'},
+        ],
+        'Application Security': [
+            {'id': 'API_GW_LOG_UNENCRYPTED', 'name': 'Unencrypted API Logs', 'severity': 'High', 'description': 'API Gateway logs without KMS encryption'},
+            {'id': 'CLOUDFRONT_ENCRYPTION_ISSUE', 'name': 'CloudFront HTTPS', 'severity': 'High', 'description': 'CloudFront not enforcing HTTPS'},
+        ],
+        'Secrets & Keys': [
+            {'id': 'UNUSED_KMS_KEYS', 'name': 'Unused KMS Keys', 'severity': 'Low', 'description': 'Disabled or unused KMS keys'},
+            {'id': 'UNUSED_SECRETS', 'name': 'Unused Secrets', 'severity': 'Medium', 'description': 'Secrets not accessed for 90+ days'},
+            {'id': 'PARAMETER_STORE_ISSUE', 'name': 'Stale Parameters', 'severity': 'Medium', 'description': 'Parameters not modified for 60+ days'},
+        ],
+        'Backup & Recovery': [
+            {'id': 'BACKUP_VAULT_UNENCRYPTED', 'name': 'Unencrypted Backup Vaults', 'severity': 'High', 'description': 'AWS Backup vaults without KMS encryption'},
+        ],
+        'Serverless Security': [
+            {'id': 'LAMBDA_PUBLIC_ACCESS', 'name': 'Public Lambda Functions', 'severity': 'Critical', 'description': 'Lambda functions with public access policies'},
+            {'id': 'SNS_UNENCRYPTED', 'name': 'Unencrypted SNS Topics', 'severity': 'High', 'description': 'SNS topics without KMS encryption'},
+            {'id': 'SQS_UNENCRYPTED', 'name': 'Unencrypted SQS Queues', 'severity': 'High', 'description': 'SQS queues without KMS encryption'},
+        ],
+        'Monitoring & Logging': [
+            {'id': 'CLOUDTRAIL_ISSUES', 'name': 'CloudTrail Issues', 'severity': 'Critical', 'description': 'CloudTrail logging disabled or not encrypted'},
+            {'id': 'VPC_NO_FLOW_LOGS', 'name': 'VPC Flow Logs Disabled', 'severity': 'Medium', 'description': 'VPCs without flow logs enabled'},
+            {'id': 'ELB_NO_LOGGING', 'name': 'ELB Access Logs Disabled', 'severity': 'Medium', 'description': 'Load balancers without access logging'},
+        ]
+    }
     return jsonify({'checks': checks}), 200
 
 @app.route('/api/audit', methods=['POST'])
@@ -190,7 +218,9 @@ def run_audit():
                     'IAM_ACCESS_KEY_UNUSED': audit.check_iam_access_keys_unused,
                     'EBS_UNENCRYPTED': audit.check_ebs_encryption,
                     'RDS_UNENCRYPTED': audit.check_rds_encryption,
+                    'RDS_PUBLIC_ACCESS': audit.check_rds_public_access,
                     'AURORA_UNENCRYPTED': audit.check_aurora_encryption,
+                    'ROOT_MFA_DISABLED': audit.check_root_account_mfa,
                     'IAM_ROLE_UNUSED': audit.check_iam_roles_unused,
                     'BACKUP_VAULT_UNENCRYPTED': audit.check_backup_vaults_encryption,
                     'EC2_NO_IMDSV2': audit.check_ec2_imdsv2,
@@ -202,7 +232,13 @@ def run_audit():
                     'RDS_AURORA_BACKUP_UNENCRYPTED': audit.check_rds_aurora_backups_encrypted,
                     'UNUSED_KMS_KEYS': audit.check_unused_kms_keys,
                     'UNUSED_SECRETS': audit.check_unused_secrets,
-                    'PARAMETER_STORE_ISSUE': audit.check_parameter_store
+                    'PARAMETER_STORE_ISSUE': audit.check_parameter_store,
+                    'VPC_NO_FLOW_LOGS': audit.check_vpc_flow_logs,
+                    'LAMBDA_PUBLIC_ACCESS': audit.check_lambda_public_access,
+                    'ELB_NO_LOGGING': audit.check_elb_logging,
+                    'SNS_UNENCRYPTED': audit.check_sns_topic_encryption,
+                    'SQS_UNENCRYPTED': audit.check_sqs_queue_encryption,
+                    'CLOUDTRAIL_ISSUES': audit.check_cloudtrail_logging
                 }
                 
                 report = {}
@@ -315,18 +351,27 @@ def download_report():
                     'IAM_ACCESS_KEY_UNUSED': audit.check_iam_access_keys_unused,
                     'EBS_UNENCRYPTED': audit.check_ebs_encryption,
                     'RDS_UNENCRYPTED': audit.check_rds_encryption,
+                    'RDS_PUBLIC_ACCESS': audit.check_rds_public_access,
                     'AURORA_UNENCRYPTED': audit.check_aurora_encryption,
+                    'ROOT_MFA_DISABLED': audit.check_root_account_mfa,
                     'IAM_ROLE_UNUSED': audit.check_iam_roles_unused,
                     'BACKUP_VAULT_UNENCRYPTED': audit.check_backup_vaults_encryption,
                     'EC2_NO_IMDSV2': audit.check_ec2_imdsv2,
                     'EC2_UNUSED_KEY_PAIR': audit.check_unused_key_pairs,
+                    'AMI_UNENCRYPTED': audit.check_ami_encryption,
                     'ECS_ENCRYPTION_ISSUE': audit.check_ecs_encryption_issues,
                     'API_GW_LOG_UNENCRYPTED': audit.check_api_gateway_log_encryption,
                     'CLOUDFRONT_ENCRYPTION_ISSUE': audit.check_cloudfront_encryption,
                     'RDS_AURORA_BACKUP_UNENCRYPTED': audit.check_rds_aurora_backups_encrypted,
                     'UNUSED_KMS_KEYS': audit.check_unused_kms_keys,
                     'UNUSED_SECRETS': audit.check_unused_secrets,
-                    'PARAMETER_STORE_ISSUE': audit.check_parameter_store
+                    'PARAMETER_STORE_ISSUE': audit.check_parameter_store,
+                    'VPC_NO_FLOW_LOGS': audit.check_vpc_flow_logs,
+                    'LAMBDA_PUBLIC_ACCESS': audit.check_lambda_public_access,
+                    'ELB_NO_LOGGING': audit.check_elb_logging,
+                    'SNS_UNENCRYPTED': audit.check_sns_topic_encryption,
+                    'SQS_UNENCRYPTED': audit.check_sqs_queue_encryption,
+                    'CLOUDTRAIL_ISSUES': audit.check_cloudtrail_logging
                 }
                 
                 report = {}
