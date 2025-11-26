@@ -90,3 +90,5 @@ Thumbs.db
 # Docker (if using)
 .dockerignore
 
+onboarding/onboarding_service.py
+onboarding/terraform/main.tf
