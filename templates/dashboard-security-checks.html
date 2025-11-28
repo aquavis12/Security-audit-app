@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security Dashboard - SecAuditTool</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --sudo-primary: #1a1a2e;
+            --sudo-accent: #0f3460;
+            --sudo-highlight: #16c784;
+            --sudo-warning: #ff6b6b;
+            --sudo-info: #4ecdc4;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: linear-gradient(135deg, var(--sudo-primary) 0%, var(--sudo-accent) 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #333;
+        }
+        
+        .navbar {
+            background: rgba(26, 26, 46, 0.95);
+            backdrop-filter: blur(10px);
+            border-bottom: 2px solid var(--sudo-highlight);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+        }
+        
+        .navbar-brand {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--sudo-highlight) !important;
+            letter-spacing: 0.5px;
+        }
+        
+        .navbar-brand i {
+            margin-right: 8px;
+        }
+        
+        .main-content {
+            padding: 40px 20px;
+        }
+        
+        .page-header {
+            color: white;
+            margin-bottom: 40px;
+            animation: slideDown 0.6s ease-out;
+        }
+        
+        .page-header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+        
+        .page-header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+        
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .stat-card {
+            border-radius: 12px;
+            border: none;
+            background: white;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--sudo-highlight), var(--sudo-info));
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.15);
+        }
+        
+        .stat-card .card-body {
+            padding: 25px;
+        }
+        
+        .stat-label {
+            font-size: 0.9rem;
+            color: #666;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+        }
+        
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--sudo-primary);
+            margin-bottom: 5px;
+        }
+        
+        .stat-icon {
+            width: 70px;
+            height: 70px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            background: linear-gradient(135deg, rgba(22, 199, 132, 0.1), rgba(78, 205, 196, 0.1));
+            color: var(--sudo-highlight);
+        }
+        
+        .stat-card.critical .stat-icon {
+            background: linear-gradient(135deg, rgba(255, 107, 107, 0.1), rgba(255, 107, 107, 0.05));
+            color: var(--sudo-warning);
+        }
+        
+        .stat-card.critical .stat-value {
+            color: var(--sudo-warning);
+        }
+        
+        .chart-container {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+            margin-bottom: 30px;
+        }
+        
+        .chart-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: var(--sudo-primary);
+            margin-bottom: 25px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .chart-title i {
+            margin-right: 12px;
+            color: var(--sudo-highlight);
+        }
+        
+        .table-responsive {
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .table {
+            margin-bottom: 0;
+        }
+        
+        .table thead {
+            background: linear-gradient(135deg, var(--sudo-primary), var(--sudo-accent));
+            color: white;
+        }
+        
+        .table thead th {
+            border: none;
+            font-weight: 600;
+            padding: 15px;
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            letter-spacing: 0.5px;
+        }
+        
+        .table tbody tr {
+            border-bottom: 1px solid #eee;
+            transition: background-color 0.2s;
+        }
+        
+        .table tbody tr:hover {
+            background-color: #f8f9fa;
+        }
+        
+        .table tbody td {
+            padding: 15px;
+            vertical-align: middle;
+        }
+        
+        .badge {
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.8rem;
+        }
+        
+        .badge.bg-critical {
+            background: linear-gradient(135deg, #ff6b6b, #ff5252) !important;
+        }
+        
+        .badge.bg-high {
+            background: linear-gradient(135deg, #ffa502, #ff8c00) !important;
+        }
+        
+        .badge.bg-medium {
+            background: linear-gradient(135deg, #ffd93d, #ffb700) !important;
+        }
+        
+        .badge.bg-low {
+            background: linear-gradient(135deg, #16c784, #00d4aa) !important;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+        
+        .empty-state i {
+            font-size: 4rem;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--sudo-highlight), var(--sudo-info));
+            border: none;
+            border-radius: 8px;
+            padding: 10px 20px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(22, 199, 132, 0.3);
+        }
+        
+        .compliance-score {
+            font-size: 3rem;
+            font-weight: 700;
+            color: var(--sudo-highlight);
+        }
+        
+        .compliance-score.warning {
+            color: #ffa502;
+        }
+        
+        .compliance-score.critical {
+            color: var(--sudo-warning);
+        }
+        
+        @media (max-width: 768px) {
+            .page-header h1 {
+                font-size: 1.8rem;
+            }
+            
+            .stat-value {
+                font-size: 1.8rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg sticky-top">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="{{ url_for('index') }}">
+                <i class="fas fa-shield-alt"></i>
+                SecAuditTool
+            </a>
+            <div class="d-flex gap-2">
+                <a href="{{ url_for('index') }}" class="btn btn-outline-light btn-sm">
+                    <i class="fas fa-play-circle me-1"></i>Run Audit
+                </a>
+                <button class="btn btn-outline-light btn-sm" onclick="location.reload()">
+                    <i class="fas fa-sync-alt me-1"></i>Refresh
+                </button>
+            </div>
+        </div>
+    </nav>
+    
+    <!-- Main Content -->
+    <div class="main-content">
+        <div class="container-fluid">
+            <!-- Page Header -->
+            <div class="page-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h1><i class="fas fa-shield-alt"></i> Security Checks Dashboard</h1>
+                        <p>Real-time security posture and findings metrics</p>
+                    </div>
+                    <div>
+                        <a href="/dashboard/compliance-audit" class="btn btn-outline-light">
+                            <i class="fas fa-certificate me-2"></i>Switch to Compliance Audit
+                        </a>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Key Metrics -->
+            <div class="row mb-4">
+                <div class="col-lg-3 col-md-6 mb-3">
+                    <div class="card stat-card">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <div class="stat-label">Total Reports</div>
+                                    <div class="stat-value">{{ stats.total_reports }}</div>
+                                </div>
+                                <div class="stat-icon">
+                                    <i class="fas fa-file-alt"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-lg-3 col-md-6 mb-3">
+                    <div class="card stat-card">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <div class="stat-label">Total Findings</div>
+                                    <div class="stat-value">{{ stats.total_findings }}</div>
+                                </div>
+                                <div class="stat-icon">
+                                    <i class="fas fa-exclamation-circle"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-lg-3 col-md-6 mb-3">
+                    <div class="card stat-card critical">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <div class="stat-label">Critical Issues</div>
+                                    <div class="stat-value">{{ stats.critical_findings }}</div>
+                                </div>
+                                <div class="stat-icon">
+                                    <i class="fas fa-exclamation-triangle"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-lg-3 col-md-6 mb-3">
+                    <div class="card stat-card">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <div class="stat-label">Compliance Score</div>
+                                    <div class="compliance-score">{{ stats.compliance_score or 0 }}%</div>
+                                </div>
+                                <div class="stat-icon">
+                                    <i class="fas fa-check-circle"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Charts Row -->
+            <div class="row mb-4">
+                <div class="col-lg-6">
+                    <div class="chart-container">
+                        <div class="chart-title">
+                            <i class="fas fa-chart-doughnut"></i>
+                            Risk Distribution
+                        </div>
+                        <canvas id="riskChart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="col-lg-6">
+                    <div class="chart-container">
+                        <div class="chart-title">
+                            <i class="fas fa-chart-line"></i>
+                            Findings Trend
+                        </div>
+                        <canvas id="trendChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Recent Reports -->
+            <div class="chart-container">
+                <div class="chart-title">
+                    <i class="fas fa-history"></i>
+                    Recent Audit Reports
+                </div>
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Account</th>
+                                <th>Region</th>
+                                <th>Total</th>
+                                <th>Critical</th>
+                                <th>High</th>
+                                <th>Medium</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% if stats.recent_reports %}
+                                {% for report in stats.recent_reports %}
+                                <tr>
+                                    <td><small>{{ report.scan_date }}</small></td>
+                                    <td><code style="font-size: 0.85rem;">{{ report.account_id }}</code></td>
+                                    <td><span class="badge bg-info">{{ report.region }}</span></td>
+                                    <td><strong>{{ report.total_findings }}</strong></td>
+                                    <td>
+                                        {% if report.critical_findings > 0 %}
+                                        <span class="badge bg-critical">{{ report.critical_findings }}</span>
+                                        {% else %}
+                                        <span class="badge bg-low">0</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if report.high_findings > 0 %}
+                                        <span class="badge bg-high">{{ report.high_findings }}</span>
+                                        {% else %}
+                                        <span class="badge bg-low">0</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if report.medium_findings > 0 %}
+                                        <span class="badge bg-medium">{{ report.medium_findings }}</span>
+                                        {% else %}
+                                        <span class="badge bg-low">0</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if report.critical_findings > 0 %}
+                                        <span class="badge bg-critical">⚠ Action Required</span>
+                                        {% elif report.high_findings > 0 %}
+                                        <span class="badge bg-high">⚠ Review</span>
+                                        {% else %}
+                                        <span class="badge bg-low">✓ Compliant</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            {% else %}
+                                <tr>
+                                    <td colspan="8">
+                                        <div class="empty-state">
+                                            <i class="fas fa-inbox"></i>
+                                            <p>No reports generated yet</p>
+                                            <a href="{{ url_for('index') }}" class="btn btn-primary btn-sm mt-3">
+                                                <i class="fas fa-play-circle me-1"></i>Run Your First Audit
+                                            </a>
+                                        </div>
+                                    </td>
+                                </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Risk Distribution Chart
+        const riskCtx = document.getElementById('riskChart').getContext('2d');
+        new Chart(riskCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Critical', 'High', 'Medium', 'Low'],
+                datasets: [{
+                    data: [
+                        {{ stats.critical_findings or 0 }},
+                        {{ stats.high_findings or 0 }},
+                        {{ stats.medium_findings or 0 }},
+                        {{ stats.low_findings or 0 }}
+                    ],
+                    backgroundColor: [
+                        '#ff6b6b',
+                        '#ffa502',
+                        '#ffd93d',
+                        '#16c784'
+                    ],
+                    borderColor: 'white',
+                    borderWidth: 3
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            padding: 20,
+                            font: { size: 12, weight: '600' }
+                        }
+                    }
+                }
+            }
+        });
+        
+        // Findings Trend Chart
+        const trendCtx = document.getElementById('trendChart').getContext('2d');
+        new Chart(trendCtx, {
+            type: 'line',
+            data: {
+                labels: {{ stats.chart_months | tojson }},
+                datasets: [
+                    {
+                        label: 'Critical',
+                        data: {{ stats.severity_trends.critical | tojson }},
+                        borderColor: '#ff6b6b',
+                        backgroundColor: 'rgba(255, 107, 107, 0.1)',
+                        tension: 0.4,
+                        borderWidth: 2
+                    },
+                    {
+                        label: 'High',
+                        data: {{ stats.severity_trends.high | tojson }},
+                        borderColor: '#ffa502',
+                        backgroundColor: 'rgba(255, 165, 2, 0.1)',
+                        tension: 0.4,
+                        borderWidth: 2
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: {
+                            padding: 15,
+                            font: { size: 12, weight: '600' }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { stepSize: 1 }
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>

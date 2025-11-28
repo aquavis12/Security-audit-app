@@ -144,19 +144,37 @@ class DynamoDBService:
             logger.error(f"Error getting reports by account: {e}")
             return []
     
-    def get_dashboard_stats(self):
-        """Get statistics for dashboard"""
+    def _convert_decimals(self, obj):
+        """Convert Decimal objects to int/float for JSON serialization"""
+        if isinstance(obj, Decimal):
+            return int(obj) if obj % 1 == 0 else float(obj)
+        elif isinstance(obj, dict):
+            return {k: self._convert_decimals(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._convert_decimals(item) for item in obj]
+        return obj
+    
+    def get_dashboard_stats(self, audit_mode=None):
+        """Get statistics for dashboard - Prowler-inspired metrics
+        
+        Args:
+            audit_mode: Optional filter for 'security_checks' or 'compliance_audit'
+        """
         try:
             table = self.dynamodb.Table(self.audit_reports_table)
             response = table.scan()
             items = response.get('Items', [])
             
+            # Filter by audit mode if specified
+            if audit_mode:
+                items = [item for item in items if item.get('audit_mode') == audit_mode]
+            
             total_reports = len(items)
-            total_findings = sum(item.get('total_findings', 0) for item in items)
-            critical_findings = sum(item.get('critical_findings', 0) for item in items)
-            high_findings = sum(item.get('high_findings', 0) for item in items)
-            medium_findings = sum(item.get('medium_findings', 0) for item in items)
-            low_findings = sum(item.get('low_findings', 0) for item in items)
+            total_findings = int(sum(self._convert_decimals(item.get('total_findings', 0)) for item in items))
+            critical_findings = int(sum(self._convert_decimals(item.get('critical_findings', 0)) for item in items))
+            high_findings = int(sum(self._convert_decimals(item.get('high_findings', 0)) for item in items))
+            medium_findings = int(sum(self._convert_decimals(item.get('medium_findings', 0)) for item in items))
+            low_findings = int(sum(self._convert_decimals(item.get('low_findings', 0)) for item in items))
             
             # Get unique accounts and regions
             accounts = set(item.get('account_id') for item in items if item.get('account_id'))
@@ -168,12 +186,18 @@ class DynamoDBService:
             # Get reports over time (last 6 months)
             from collections import defaultdict
             reports_by_month = defaultdict(int)
+            findings_by_severity = defaultdict(lambda: {'critical': 0, 'high': 0, 'medium': 0, 'low': 0})
+            
             for item in items:
                 if item.get('scan_date'):
                     try:
                         # Extract month from scan_date
                         month = item['scan_date'][:7]  # YYYY-MM format
                         reports_by_month[month] += 1
+                        findings_by_severity[month]['critical'] += item.get('critical_findings', 0)
+                        findings_by_severity[month]['high'] += item.get('high_findings', 0)
+                        findings_by_severity[month]['medium'] += item.get('medium_findings', 0)
+                        findings_by_severity[month]['low'] += item.get('low_findings', 0)
                     except:
                         pass
             
@@ -182,12 +206,35 @@ class DynamoDBService:
             now = datetime.now()
             months = []
             month_counts = []
+            severity_trends = {'critical': [], 'high': [], 'medium': [], 'low': []}
+            
             for i in range(5, -1, -1):
                 month_date = now - timedelta(days=30*i)
                 month_key = month_date.strftime('%Y-%m')
                 month_label = month_date.strftime('%b')
                 months.append(month_label)
                 month_counts.append(reports_by_month.get(month_key, 0))
+                
+                # Severity trends
+                severity_trends['critical'].append(findings_by_severity[month_key]['critical'])
+                severity_trends['high'].append(findings_by_severity[month_key]['high'])
+                severity_trends['medium'].append(findings_by_severity[month_key]['medium'])
+                severity_trends['low'].append(findings_by_severity[month_key]['low'])
+            
+            # Calculate compliance score (pass rate)
+            total_checks = sum(item.get('total_findings', 0) for item in items)
+            passed_checks = total_checks - (critical_findings + high_findings)
+            compliance_score = int((passed_checks / total_checks * 100)) if total_checks > 0 else 100
+            
+            # Top failing checks
+            from collections import Counter
+            failing_checks = Counter()
+            for item in sorted_items[:20]:  # Last 20 reports
+                # This would need check-level data stored in DynamoDB
+                pass
+            
+            # Convert all items to JSON-serializable format
+            recent_reports = [self._convert_decimals(item) for item in sorted_items[:10]]
             
             return {
                 'total_reports': total_reports,
@@ -198,9 +245,17 @@ class DynamoDBService:
                 'low_findings': low_findings,
                 'accounts_scanned': len(accounts),
                 'regions_scanned': len(regions),
-                'recent_reports': sorted_items[:10],
+                'compliance_score': compliance_score,
+                'recent_reports': recent_reports,
                 'chart_months': months,
-                'chart_counts': month_counts
+                'chart_counts': month_counts,
+                'severity_trends': severity_trends,
+                'risk_distribution': {
+                    'critical': critical_findings,
+                    'high': high_findings,
+                    'medium': medium_findings,
+                    'low': low_findings
+                }
             }
         except Exception as e:
             logger.error(f"Error getting dashboard stats: {e}")
@@ -213,9 +268,12 @@ class DynamoDBService:
                 'low_findings': 0,
                 'accounts_scanned': 0,
                 'regions_scanned': 0,
+                'compliance_score': 0,
                 'recent_reports': [],
                 'chart_months': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
-                'chart_counts': [0, 0, 0, 0, 0, 0]
+                'chart_counts': [0, 0, 0, 0, 0, 0],
+                'severity_trends': {'critical': [0]*6, 'high': [0]*6, 'medium': [0]*6, 'low': [0]*6},
+                'risk_distribution': {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}
             }
     
     def delete_audit_report(self, report_id, timestamp):

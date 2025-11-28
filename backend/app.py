@@ -6,7 +6,7 @@ Provides REST API for running security audits with cross-account role assumption
 import os
 import json
 import boto3
-from flask import Flask, request, jsonify, render_template, redirect
+from flask import Flask, request, jsonify, render_template, redirect, send_file
 from datetime import datetime, timezone
 import logging
 from io import BytesIO
@@ -24,6 +24,12 @@ try:
         utcnow
     )
     from .dynamodb_service import DynamoDBService
+    from .auth.iam_role_manager import IAMRoleManager, AuditCredentials
+    from .auth.validators import AuditRequestValidator
+    from .services.audit_manager_service import AuditManagerService
+    from .compliance_audit_engine import ComplianceAuditEngine
+    from .audit_modes import AuditMode, SecurityCheckConfig, ComplianceAuditConfig, AuditModeValidator
+    from .setup_audit_manager import AuditManagerSetup
 except ImportError:
     from sa import (
         AWSecurityAudit, 
@@ -35,9 +41,19 @@ except ImportError:
         utcnow
     )
     from dynamodb_service import DynamoDBService
+    from auth.iam_role_manager import IAMRoleManager, AuditCredentials
+    from auth.validators import AuditRequestValidator
+    from services.audit_manager_service import AuditManagerService
+    from compliance_audit_engine import ComplianceAuditEngine
+    from audit_modes import AuditMode, SecurityCheckConfig, ComplianceAuditConfig, AuditModeValidator
+    from setup_audit_manager import AuditManagerSetup
 
-# Initialize DynamoDB service
+# Initialize services
 db_service = DynamoDBService()
+iam_role_manager = IAMRoleManager()
+validator = AuditRequestValidator()
+compliance_engine = ComplianceAuditEngine()
+mode_validator = AuditModeValidator()
 
 # Configure Flask with templates
 app = Flask(__name__, template_folder='../templates')
@@ -45,55 +61,60 @@ app = Flask(__name__, template_folder='../templates')
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def assume_role(account_id, role_name, external_id, region):
-    """Assume cross-account IAM role with mandatory External ID"""
-    try:
-        if not external_id:
-            raise ValueError("External ID is required for cross-account role assumption")
-        
-        sts_client = boto3.client('sts', region_name=region)
-        role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
-        
-        logger.info(f"Assuming role: {role_arn} with External ID")
-        
-        response = sts_client.assume_role(
-            RoleArn=role_arn,
-            RoleSessionName='SecurityAuditSession',
-            ExternalId=external_id
-        )
-        
-        credentials = response['Credentials']
-        logger.info(f"Successfully assumed role: {role_arn}")
-        return {
-            'aws_access_key_id': credentials['AccessKeyId'],
-            'aws_secret_access_key': credentials['SecretAccessKey'],
-            'aws_session_token': credentials['SessionToken']
-        }
-    except Exception as e:
-        logger.error(f"Failed to assume role: {str(e)}")
-        raise
-
 @app.route('/')
 def index():
-    """Serve main page"""
-    return render_template('index.html')
+    """Serve main page - redirect to audit modes"""
+    return redirect('/audit-modes')
 
 @app.route('/dashboard')
 def dashboard():
-    """Serve dashboard page with usage statistics"""
+    """Serve unified dashboard page - redirects to security checks dashboard"""
+    return redirect('/dashboard/security-checks')
+
+@app.route('/dashboard/security-checks')
+def dashboard_security_checks():
+    """Serve security checks dashboard with usage statistics"""
     try:
-        stats = db_service.get_dashboard_stats()
-        return render_template('dashboard.html', stats=stats, user={'name': 'User', 'role': 'admin'})
+        stats = db_service.get_dashboard_stats(audit_mode='security_checks')
+        return render_template('dashboard-security-checks.html', stats=stats, user={'name': 'User', 'role': 'admin'})
     except Exception as e:
-        logger.error(f"Error loading dashboard: {e}")
+        logger.error(f"Error loading security checks dashboard: {e}")
         # Return dashboard with empty stats if DynamoDB not available
-        return render_template('dashboard.html', stats={
+        return render_template('dashboard-security-checks.html', stats={
             'total_reports': 0,
             'total_findings': 0,
             'critical_findings': 0,
+            'high_findings': 0,
+            'medium_findings': 0,
+            'low_findings': 0,
+            'compliance_score': 0,
             'accounts_scanned': 0,
             'regions_scanned': 0,
-            'recent_reports': []
+            'recent_reports': [],
+            'chart_months': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+            'chart_counts': [0, 0, 0, 0, 0, 0],
+            'severity_trends': {'critical': [0]*6, 'high': [0]*6, 'medium': [0]*6, 'low': [0]*6}
+        }, user={'name': 'User', 'role': 'admin'})
+
+@app.route('/dashboard/compliance-audit')
+def dashboard_compliance_audit():
+    """Serve compliance audit dashboard with assessment statistics"""
+    try:
+        stats = db_service.get_dashboard_stats(audit_mode='compliance_audit')
+        return render_template('dashboard-compliance-audit.html', stats=stats, user={'name': 'User', 'role': 'admin'})
+    except Exception as e:
+        logger.error(f"Error loading compliance audit dashboard: {e}")
+        # Return dashboard with empty stats if DynamoDB not available
+        return render_template('dashboard-compliance-audit.html', stats={
+            'total_assessments': 0,
+            'total_findings': 0,
+            'compliant': 0,
+            'non_compliant': 0,
+            'avg_compliance_score': 0,
+            'accounts_scanned': 0,
+            'recent_assessments': [],
+            'chart_months': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+            'chart_scores': [0, 0, 0, 0, 0, 0]
         }, user={'name': 'User', 'role': 'admin'})
 
 @app.route('/reports')
@@ -106,10 +127,55 @@ def reports():
         logger.error(f"Error loading reports: {e}")
         return render_template('reports.html', reports=[], user={'name': 'User', 'role': 'admin'})
 
-@app.route('/admin_panel')
-def admin_panel():
-    """Admin panel for system management"""
-    return render_template('admin_panel.html', user={'name': 'User', 'role': 'admin'})
+@app.route('/audit-modes')
+def audit_modes():
+    """Serve audit mode selection page - main landing page"""
+    return render_template('audit-modes.html')
+
+@app.route('/security-checks')
+def security_checks():
+    """Serve security checks audit page"""
+    return render_template('index.html')
+
+@app.route('/compliance-audit')
+def compliance_audit_page():
+    """Serve compliance audit page"""
+    return render_template('compliance-audit.html')
+
+
+
+@app.route('/api/audit-modes', methods=['GET'])
+def get_audit_modes():
+    """Get available audit modes"""
+    return jsonify({
+        'modes': [
+            {
+                'id': 'security_checks',
+                'name': 'Security Checks',
+                'description': 'Run custom security checks across multiple regions',
+                'icon': 'fa-shield-alt',
+                'features': [
+                    'Multi-region scanning (up to 3 regions)',
+                    'Custom check selection',
+                    'PDF report generation',
+                    'S3 integration'
+                ]
+            },
+            {
+                'id': 'compliance_audit',
+                'name': 'Compliance Audit',
+                'description': 'AWS Audit Manager-based compliance assessments',
+                'icon': 'fa-certificate',
+                'features': [
+                    'AWS Audit Manager integration',
+                    'Framework-based assessments',
+                    'Compliance scoring',
+                    'Evidence tracking',
+                    'Assessment management'
+                ]
+            }
+        ]
+    }), 200
 
 @app.route('/api/create-tables', methods=['POST'])
 def create_tables():
@@ -128,6 +194,209 @@ def create_tables():
 def health_check():
     """Health check endpoint"""
     return jsonify({'status': 'healthy', 'service': 'aws-security-audit'}), 200
+
+@app.route('/api/compliance/assessments', methods=['GET'])
+def get_compliance_assessments():
+    """Get AWS Audit Manager assessments"""
+    try:
+        # Get credentials from session or request
+        account_id = request.args.get('accountId')
+        role_name = request.args.get('roleName', 'SecurityAuditRole')
+        external_id = request.args.get('externalId')
+        region = request.args.get('region', 'us-east-1')
+        
+        if not all([account_id, external_id]):
+            return jsonify({'error': 'Missing required parameters'}), 400
+        
+        # Assume role
+        try:
+            credentials = iam_role_manager.assume_role(
+                account_id=account_id,
+                role_name=role_name,
+                external_id=external_id,
+                region=region
+            )
+        except Exception as e:
+            logger.error(f"Role assumption failed: {str(e)}")
+            return jsonify({'error': f'Failed to assume role: {str(e)}'}), 403
+        
+        # Initialize Audit Manager service
+        audit_manager = AuditManagerService(region=region, credentials=credentials)
+        
+        # Get assessments
+        assessments = audit_manager.get_assessments()
+        frameworks = audit_manager.get_compliance_frameworks()
+        
+        return jsonify({
+            'success': True,
+            'assessments': assessments,
+            'frameworks': frameworks
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Error fetching assessments: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/setup/audit-manager', methods=['POST'])
+def setup_audit_manager():
+    """Setup AWS Audit Manager prerequisites automatically"""
+    try:
+        data = request.json
+        
+        # Validate required fields
+        required_fields = ['accountId', 'roleName', 'externalId', 'region']
+        for field in required_fields:
+            if field not in data or not data[field]:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+        
+        account_id = data['accountId']
+        role_name = data['roleName']
+        external_id = data['externalId']
+        region = data['region']
+        
+        logger.info(f"Setting up AWS Audit Manager for account {account_id}")
+        
+        # Assume role
+        try:
+            credentials = iam_role_manager.assume_role(
+                account_id=account_id,
+                role_name=role_name,
+                external_id=external_id,
+                region=region
+            )
+        except Exception as e:
+            logger.error(f"Role assumption failed: {str(e)}")
+            return jsonify({'error': f'Failed to assume role: {str(e)}'}), 403
+        
+        # Run setup
+        setup = AuditManagerSetup(account_id=account_id, region=region, credentials=credentials)
+        results = setup.setup_all()
+        
+        if results['success']:
+            logger.info(f"✅ AWS Audit Manager setup completed for account {account_id}")
+            return jsonify({
+                'success': True,
+                'message': 'AWS Audit Manager setup completed successfully',
+                'steps': results['steps']
+            }), 200
+        else:
+            logger.warning(f"⚠️ AWS Audit Manager setup completed with errors: {results['errors']}")
+            return jsonify({
+                'success': False,
+                'message': 'Setup completed with some errors',
+                'steps': results['steps'],
+                'errors': results['errors']
+            }), 200
+    
+    except Exception as e:
+        logger.error(f"Setup failed: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/audit/compliance', methods=['POST'])
+def run_compliance_audit():
+    """Run compliance audit using AWS Audit Manager"""
+    try:
+        data = request.json
+        
+        # Validate required fields
+        required_fields = ['accountId', 'roleName', 'externalId', 'region']
+        for field in required_fields:
+            if field not in data or not data[field]:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+        
+        # Create config
+        config = ComplianceAuditConfig(
+            account_id=data['accountId'],
+            role_name=data['roleName'],
+            external_id=data['externalId'],
+            region=data['region'],
+            framework_id=data.get('frameworkId'),
+            assessment_id=data.get('assessmentId'),
+            create_new_assessment=data.get('createNewAssessment', True),
+            assessment_name=data.get('assessmentName', f"Audit-{utcnow().strftime('%Y%m%d%H%M%S')}"),
+            s3_bucket=data.get('s3Bucket')
+        )
+        
+        # Validate config
+        is_valid, error_msg = mode_validator.validate_compliance_audit_config(config)
+        if not is_valid:
+            logger.warning(f"Invalid compliance audit config: {error_msg}")
+            return jsonify({'error': error_msg}), 400
+        
+        logger.info(f"Starting compliance audit for account {config.account_id}")
+        
+        # Run compliance audit
+        results = compliance_engine.run_compliance_audit(config)
+        
+        if results['success']:
+            # Save to DynamoDB
+            try:
+                import uuid
+                report_id = str(uuid.uuid4())
+                report_data = {
+                    'report_id': report_id,
+                    'timestamp': int(utcnow().timestamp()),
+                    'account_id': config.account_id,
+                    'region': config.region,
+                    'scan_date': utcnow().strftime('%Y-%m-%d %H:%M:%S UTC'),
+                    'audit_mode': 'compliance_audit',
+                    'assessment_id': results.get('assessment_id'),
+                    'total_findings': results.get('summary', {}).get('total_findings', 0),
+                    'compliance_percentage': results.get('summary', {}).get('compliance_percentage', 0),
+                    'compliant': results.get('summary', {}).get('compliant', 0),
+                    'non_compliant': results.get('summary', {}).get('non_compliant', 0)
+                }
+                db_service.save_audit_report(report_data)
+                logger.info(f"Saved compliance audit report to DynamoDB: {report_id}")
+            except Exception as e:
+                logger.warning(f"Failed to save report to DynamoDB: {e}")
+            
+            return jsonify(results), 200
+        else:
+            return jsonify(results), 500
+    
+    except Exception as e:
+        logger.error(f"Compliance audit failed: {str(e)}")
+        return jsonify({'error': str(e), 'audit_mode': 'compliance_audit'}), 500
+
+@app.route('/api/compliance/assessment/<assessment_id>', methods=['GET'])
+def get_assessment_details(assessment_id):
+    """Get detailed compliance assessment information"""
+    try:
+        account_id = request.args.get('accountId')
+        role_name = request.args.get('roleName', 'SecurityAuditRole')
+        external_id = request.args.get('externalId')
+        region = request.args.get('region', 'us-east-1')
+        
+        if not all([account_id, external_id]):
+            return jsonify({'error': 'Missing required parameters'}), 400
+        
+        # Assume role
+        credentials = iam_role_manager.assume_role(
+            account_id=account_id,
+            role_name=role_name,
+            external_id=external_id,
+            region=region
+        )
+        
+        # Initialize Audit Manager service
+        audit_manager = AuditManagerService(region=region, credentials=credentials)
+        
+        # Get assessment details
+        details = audit_manager.get_assessment_details(assessment_id)
+        findings = audit_manager.get_assessment_findings(assessment_id)
+        summary = audit_manager.get_compliance_summary(assessment_id)
+        
+        return jsonify({
+            'success': True,
+            'assessment': details,
+            'findings': findings,
+            'summary': summary
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Error fetching assessment details: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/checks', methods=['GET'])
 def get_available_checks():
@@ -193,6 +462,15 @@ def get_available_checks():
         ],
         'Container Security': [
             {'id': 'ECR_TAG_MUTABLE', 'name': 'ECR Tag Mutable', 'severity': 'Medium', 'description': 'ECR repositories without tag immutability enabled', 'compliance': ['PCI-DSS', 'CIS']},
+            {'id': 'ECR_SCAN_ON_PUSH_DISABLED', 'name': 'ECR Scan on Push Disabled', 'severity': 'High', 'description': 'ECR repositories without scan on push enabled', 'compliance': ['CIS', 'NIST']},
+            {'id': 'EKS_CLUSTER_LOGGING_DISABLED', 'name': 'EKS Cluster Logging Disabled', 'severity': 'Medium', 'description': 'EKS clusters without logging enabled', 'compliance': ['CIS', 'PCI-DSS']},
+            {'id': 'EKS_PUBLIC_ENDPOINT', 'name': 'EKS Public Endpoint', 'severity': 'High', 'description': 'EKS clusters with public API endpoint', 'compliance': ['CIS', 'HIPAA']},
+        ],
+        'Data Protection': [
+            {'id': 'GLACIER_VAULT_UNENCRYPTED', 'name': 'Unencrypted Glacier Vaults', 'severity': 'High', 'description': 'Glacier vaults without encryption', 'compliance': ['PCI-DSS', 'HIPAA']},
+            {'id': 'REDSHIFT_UNENCRYPTED', 'name': 'Unencrypted Redshift Clusters', 'severity': 'Critical', 'description': 'Redshift clusters without encryption at rest', 'compliance': ['PCI-DSS', 'HIPAA', 'CIS']},
+            {'id': 'REDSHIFT_PUBLIC_ACCESS', 'name': 'Public Redshift Clusters', 'severity': 'Critical', 'description': 'Redshift clusters publicly accessible', 'compliance': ['PCI-DSS', 'HIPAA', 'CIS']},
+            {'id': 'ELASTICACHE_UNENCRYPTED', 'name': 'Unencrypted ElastiCache', 'severity': 'High', 'description': 'ElastiCache clusters without encryption', 'compliance': ['PCI-DSS', 'HIPAA']},
         ]
     }
     return jsonify({'checks': checks}), 200
@@ -203,62 +481,34 @@ def run_audit():
     try:
         data = request.json
         
-        # Validate required fields - External ID is now mandatory
-        required_fields = ['accountId', 'roleName', 'externalId', 'selectedChecks']
-        for field in required_fields:
-            if field not in data or not data[field]:
-                return jsonify({'error': f'Missing required field: {field}'}), 400
+        # Validate audit request
+        is_valid, error_msg = validator.validate_audit_request(data)
+        if not is_valid:
+            logger.warning(f"Invalid audit request: {error_msg}")
+            return jsonify({'error': error_msg}), 400
         
         account_id = data['accountId']
         
-        # Validate account ID format (12 digits)
-        if not account_id.isdigit() or len(account_id) != 12:
-            return jsonify({'error': 'Invalid account ID. Must be 12 digits'}), 400
+        regions = data['regions']
         
-        # Support both single region and multiple regions
-        regions = data.get('regions', [])
-        region = data.get('region', '')
-        
-        # If single region provided, convert to list
-        if region and not regions:
-            regions = [region]
-        elif not regions:
-            return jsonify({'error': 'Missing required field: region or regions'}), 400
-        
-        # Ensure regions is a list
-        if isinstance(regions, str):
-            regions = [regions]
-        
-        # Enforce max 3 regions for performance
-        if len(regions) > 3:
-            return jsonify({
-                'error': 'Maximum 3 regions allowed per audit for optimal performance. Please select up to 3 regions.'
-            }), 400
-        
-        # Valid AWS regions
-        valid_regions = [
-            'us-east-1', 'us-east-2', 'us-west-1', 'us-west-2',
-            'eu-west-1', 'eu-west-2', 'eu-west-3', 'eu-central-1', 'eu-north-1',
-            'ap-southeast-1', 'ap-southeast-2', 'ap-northeast-1', 'ap-northeast-2', 'ap-northeast-3',
-            'ap-south-1', 'ca-central-1', 'sa-east-1', 'me-south-1', 'af-south-1'
-        ]
-        
-        # Validate all regions exist
-        invalid_regions = [r for r in regions if r not in valid_regions]
-        if invalid_regions:
-            return jsonify({
-                'error': f'Invalid AWS regions: {", ".join(invalid_regions)}. Valid regions: {", ".join(valid_regions)}'
-            }), 400
-        
-        logger.info(f"Validated regions: {regions}")
-        logger.info(f"Validated account ID: {account_id}")
         role_name = data['roleName']
         external_id = data['externalId']
         selected_checks = data['selectedChecks']
-        compliance_frameworks = data.get('complianceFrameworks', [])  # Optional frameworks
         
         logger.info(f"Starting multi-region audit for account {account_id} in regions: {regions}")
-        logger.info(f"Compliance frameworks: {compliance_frameworks}")
+        
+        # Assume role once (valid for all regions)
+        try:
+            credentials_dict = iam_role_manager.assume_role(
+                account_id=account_id,
+                role_name=role_name,
+                external_id=external_id,
+                region=regions[0]
+            )
+            credentials = credentials_dict
+        except Exception as e:
+            logger.error(f"Role assumption failed: {str(e)}")
+            return jsonify({'error': f'Failed to assume role: {str(e)}'}), 403
         
         # Generate timestamp for report naming
         timestamp = utcnow().strftime('%Y%m%d%H%M%S')
@@ -269,9 +519,6 @@ def run_audit():
             s3_bucket = f'aws-security-audit-{account_id}'.lower()
         
         logger.info(f"Using S3 bucket: {s3_bucket}")
-        
-        # Assume role once (valid for all regions)
-        credentials = assume_role(account_id, role_name, external_id, regions[0])
         
         logger.info("Successfully obtained credentials for audited account")
         
@@ -311,8 +558,6 @@ def run_audit():
                     'RDS_AURORA_BACKUP_UNENCRYPTED': audit.check_rds_aurora_backups_encrypted,
                     'UNUSED_KMS_KEYS': audit.check_unused_kms_keys,
                     'UNUSED_SECRETS': audit.check_unused_secrets,
-                    'SECRETS_UNENCRYPTED': audit.check_secrets_encryption,
-                    'SSM_PARAMETERS_UNENCRYPTED': audit.check_ssm_parameters_encryption,
                     'SECRETS_UNENCRYPTED': audit.check_secrets_encryption,
                     'SSM_PARAMETERS_UNENCRYPTED': audit.check_ssm_parameters_encryption,
                     'PARAMETER_STORE_ISSUE': audit.check_parameter_store,
@@ -382,7 +627,7 @@ def run_audit():
         # Generate PDF report and upload to customer's S3 bucket
         logger.info(f"Generating PDF report for all regions...")
         primary_region = regions[0]
-        pdf_buffer = create_pdf_report(all_findings, primary_region, credentials=credentials, compliance_frameworks=compliance_frameworks)
+        pdf_buffer = create_pdf_report(all_findings, primary_region, credentials=credentials)
         
         # S3 bucket name - use provided or generate default (one bucket per account)
         s3_bucket = data.get('s3Bucket', '').strip()
@@ -440,7 +685,12 @@ def download_report():
         logger.info(f"Generating PDF report for account {account_id}")
         
         # Assume role
-        credentials = assume_role(account_id, role_name, external_id, regions[0])
+        credentials = iam_role_manager.assume_role(
+            account_id=account_id,
+            role_name=role_name,
+            external_id=external_id,
+            region=regions[0]
+        )
         
         # Run audits for all regions
         all_findings = []
@@ -470,8 +720,6 @@ def download_report():
                     'RDS_AURORA_BACKUP_UNENCRYPTED': audit.check_rds_aurora_backups_encrypted,
                     'UNUSED_KMS_KEYS': audit.check_unused_kms_keys,
                     'UNUSED_SECRETS': audit.check_unused_secrets,
-                    'SECRETS_UNENCRYPTED': audit.check_secrets_encryption,
-                    'SSM_PARAMETERS_UNENCRYPTED': audit.check_ssm_parameters_encryption,
                     'SECRETS_UNENCRYPTED': audit.check_secrets_encryption,
                     'SSM_PARAMETERS_UNENCRYPTED': audit.check_ssm_parameters_encryption,
                     'PARAMETER_STORE_ISSUE': audit.check_parameter_store,

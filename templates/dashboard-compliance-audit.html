@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Compliance Audit Dashboard - SecAuditTool</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --sudo-primary: #1a1a2e;
+            --sudo-accent: #0f3460;
+            --sudo-highlight: #16c784;
+            --sudo-warning: #ff6b6b;
+            --sudo-info: #4ecdc4;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: linear-gradient(135deg, var(--sudo-primary) 0%, var(--sudo-accent) 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #333;
+        }
+        
+        .navbar {
+            background: rgba(26, 26, 46, 0.95);
+            backdrop-filter: blur(10px);
+            border-bottom: 2px solid var(--sudo-highlight);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+        }
+        
+        .navbar-brand {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--sudo-highlight) !important;
+            letter-spacing: 0.5px;
+        }
+        
+        .navbar-brand i {
+            margin-right: 8px;
+        }
+        
+        .main-content {
+            padding: 40px 20px;
+        }
+        
+        .page-header {
+            color: white;
+            margin-bottom: 40px;
+            animation: slideDown 0.6s ease-out;
+        }
+        
+        .page-header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+        
+        .page-header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+        
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .stat-card {
+            border-radius: 12px;
+            border: none;
+            background: white;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--sudo-info), var(--sudo-highlight));
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.15);
+        }
+        
+        .stat-card .card-body {
+            padding: 25px;
+        }
+        
+        .stat-label {
+            font-size: 0.9rem;
+            color: #666;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+        }
+        
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--sudo-primary);
+            margin-bottom: 5px;
+        }
+        
+        .stat-icon {
+            width: 70px;
+            height: 70px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            background: linear-gradient(135deg, rgba(78, 205, 196, 0.1), rgba(22, 199, 132, 0.1));
+            color: var(--sudo-info);
+        }
+        
+        .chart-container {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+            margin-bottom: 30px;
+        }
+        
+        .chart-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: var(--sudo-primary);
+            margin-bottom: 25px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .chart-title i {
+            margin-right: 12px;
+            color: var(--sudo-info);
+        }
+        
+        .table-responsive {
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .table {
+            margin-bottom: 0;
+        }
+        
+        .table thead {
+            background: linear-gradient(135deg, var(--sudo-primary), var(--sudo-accent));
+            color: white;
+        }
+        
+        .table thead th {
+            border: none;
+            font-weight: 600;
+            padding: 15px;
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            letter-spacing: 0.5px;
+        }
+        
+        .table tbody tr {
+            border-bottom: 1px solid #eee;
+            transition: background-color 0.2s;
+        }
+        
+        .table tbody tr:hover {
+            background-color: #f8f9fa;
+        }
+        
+        .table tbody td {
+            padding: 15px;
+            vertical-align: middle;
+        }
+        
+        .badge {
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.8rem;
+        }
+        
+        .badge.bg-success {
+            background: linear-gradient(135deg, #16c784, #00d4aa) !important;
+        }
+        
+        .badge.bg-warning {
+            background: linear-gradient(135deg, #ffa502, #ff8c00) !important;
+        }
+        
+        .badge.bg-danger {
+            background: linear-gradient(135deg, #ff6b6b, #ff5252) !important;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+        
+        .empty-state i {
+            font-size: 4rem;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--sudo-info), var(--sudo-highlight));
+            border: none;
+            border-radius: 8px;
+            padding: 10px 20px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(78, 205, 196, 0.3);
+        }
+        
+        .btn-outline-light {
+            border-color: rgba(255, 255, 255, 0.5);
+            color: white;
+        }
+        
+        .btn-outline-light:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+            border-color: white;
+            color: white;
+        }
+        
+        .compliance-score {
+            font-size: 3rem;
+            font-weight: 700;
+            color: var(--sudo-highlight);
+        }
+        
+        .compliance-score.warning {
+            color: #ffa502;
+        }
+        
+        .compliance-score.critical {
+            color: var(--sudo-warning);
+        }
+        
+        @media (max-width: 768px) {
+            .page-header h1 {
+                font-size: 1.8rem;
+            }
+            
+            .stat-value {
+                font-size: 1.8rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg sticky-top">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="{{ url_for('index') }}">
+                <i class="fas fa-shield-alt"></i>
+                SecAuditTool
+            </a>
+            <div class="d-flex gap-2">
+                <a href="/compliance-audit" class="btn btn-outline-light btn-sm">
+                    <i class="fas fa-play-circle me-1"></i>Run Audit
+                </a>
+                <button class="btn btn-outline-light btn-sm" onclick="location.reload()">
+                    <i class="fas fa-sync-alt me-1"></i>Refresh
+                </button>
+            </div>
+        </div>
+    </nav>
+    
+    <!-- Main Content -->
+    <div class="main-content">
+        <div class="container-fluid">
+            <!-- Page Header -->
+            <div class="page-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h1><i class="fas fa-certificate"></i> Compliance Audit Dashboard</h1>
+                        <p>AWS Audit Manager assessments and compliance metrics</p>
+                    </div>
+                    <div>
+                        <a href="/dashboard/security-checks" class="btn btn-outline-light">
+                            <i class="fas fa-shield-alt me-2"></i>Switch to Security Checks
+                        </a>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Key Metrics -->
+            <div class="row mb-4">
+                <div class="col-lg-3 col-md-6 mb-3">
+                    <div class="card stat-card">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <div class="stat-label">Total Assessments</div>
+                                    <div class="stat-value">{{ stats.total_assessments }}</div>
+                                </div>
+                                <div class="stat-icon">
+                                    <i class="fas fa-clipboard-check"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-lg-3 col-md-6 mb-3">
+                    <div class="card stat-card">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <div class="stat-label">Avg Compliance</div>
+                                    <div class="compliance-score">{{ stats.avg_compliance_score or 0 }}%</div>
+                                </div>
+                                <div class="stat-icon">
+                                    <i class="fas fa-percentage"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-lg-3 col-md-6 mb-3">
+                    <div class="card stat-card">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <div class="stat-label">Compliant</div>
+                                    <div class="stat-value" style="color: var(--sudo-highlight);">{{ stats.compliant }}</div>
+                                </div>
+                                <div class="stat-icon">
+                                    <i class="fas fa-check-circle"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-lg-3 col-md-6 mb-3">
+                    <div class="card stat-card">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <div class="stat-label">Non-Compliant</div>
+                                    <div class="stat-value" style="color: var(--sudo-warning);">{{ stats.non_compliant }}</div>
+                                </div>
+                                <div class="stat-icon">
+                                    <i class="fas fa-times-circle"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Charts Row -->
+            <div class="row mb-4">
+                <div class="col-lg-12">
+                    <div class="chart-container">
+                        <div class="chart-title">
+                            <i class="fas fa-chart-line"></i>
+                            Compliance Score Trend
+                        </div>
+                        <canvas id="complianceChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Recent Assessments -->
+            <div class="chart-container">
+                <div class="chart-title">
+                    <i class="fas fa-history"></i>
+                    Recent Compliance Assessments
+                </div>
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Account</th>
+                                <th>Assessment ID</th>
+                                <th>Compliance %</th>
+                                <th>Compliant</th>
+                                <th>Non-Compliant</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% if stats.recent_assessments %}
+                                {% for assessment in stats.recent_assessments %}
+                                <tr>
+                                    <td><small>{{ assessment.scan_date }}</small></td>
+                                    <td><code style="font-size: 0.85rem;">{{ assessment.account_id }}</code></td>
+                                    <td><small>{{ assessment.assessment_id[:20] }}...</small></td>
+                                    <td>
+                                        <strong style="color: {% if assessment.compliance_percentage >= 90 %}var(--sudo-highlight){% elif assessment.compliance_percentage >= 70 %}#ffa502{% else %}var(--sudo-warning){% endif %}">
+                                            {{ assessment.compliance_percentage }}%
+                                        </strong>
+                                    </td>
+                                    <td><span class="badge bg-success">{{ assessment.compliant }}</span></td>
+                                    <td><span class="badge bg-danger">{{ assessment.non_compliant }}</span></td>
+                                    <td>
+                                        {% if assessment.compliance_percentage >= 90 %}
+                                        <span class="badge bg-success">✓ Compliant</span>
+                                        {% elif assessment.compliance_percentage >= 70 %}
+                                        <span class="badge bg-warning">⚠ Partial</span>
+                                        {% else %}
+                                        <span class="badge bg-danger">✗ Non-Compliant</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            {% else %}
+                                <tr>
+                                    <td colspan="7">
+                                        <div class="empty-state">
+                                            <i class="fas fa-inbox"></i>
+                                            <p>No compliance assessments run yet</p>
+                                            <a href="/compliance-audit" class="btn btn-primary btn-sm mt-3">
+                                                <i class="fas fa-play-circle me-1"></i>Run Your First Assessment
+                                            </a>
+                                        </div>
+                                    </td>
+                                </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Compliance Score Trend Chart
+        const complianceCtx = document.getElementById('complianceChart').getContext('2d');
+        new Chart(complianceCtx, {
+            type: 'line',
+            data: {
+                labels: {{ stats.chart_months | tojson }},
+                datasets: [{
+                    label: 'Compliance Score (%)',
+                    data: {{ stats.chart_scores | tojson }},
+                    borderColor: '#16c784',
+                    backgroundColor: 'rgba(22, 199, 132, 0.1)',
+                    tension: 0.4,
+                    borderWidth: 3,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: {
+                            padding: 15,
+                            font: { size: 12, weight: '600' }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100,
+                        ticks: { 
+                            stepSize: 10,
+                            callback: function(value) {
+                                return value + '%';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>

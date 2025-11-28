@@ -1,11 +1,15 @@
 # AWS Security Audit Application
 
-A comprehensive AWS security audit tool built with Flask and Python. Audit multiple AWS regions from a single account with **46 security checks** covering EC2, S3, IAM, RDS, DynamoDB, Lambda, and more.
+A comprehensive AWS security audit tool built with Flask and Python. Choose between **Security Checks mode** (37 custom checks) or **Compliance Audit mode** (AWS Audit Manager integration) for complete security assessment coverage.
 
 ## Features
 
-### Core Capabilities
-- **46 Comprehensive Security Checks** across 12 AWS service categories
+### Dual Audit Modes
+- **🛡️ Security Checks Mode** - 46 comprehensive custom security checks across 12 AWS service categories
+- **📋 Compliance Audit Mode** - AWS Audit Manager integration for framework-based assessments
+
+### Security Checks Mode Capabilities
+- **37 Comprehensive Security Checks** across 12 AWS service categories
 - **Multi-Region Support** - Audit up to 3 regions per scan for optimal performance
 - **Cross-Account Access** - Secure role assumption with mandatory External ID
 - **Professional PDF Reports** - Detailed findings with recommendations and AWS documentation links
@@ -13,15 +17,21 @@ A comprehensive AWS security audit tool built with Flask and Python. Audit multi
 - **S3 Integration** - Automatic report storage in customer's account with presigned URLs
 - **Single Bucket Architecture** - One S3 bucket per customer, organized by region and timestamp
 
-### Advanced Features
+### Compliance Audit Mode Capabilities
+- **AWS Audit Manager Integration** - Leverage native AWS compliance assessments
+- **Framework-Based Assessments** - Use standard compliance frameworks (SOC, PCI-DSS, HIPAA, etc.)
+- **Evidence Collection** - Automatic evidence gathering and tracking
+- **Assessment Management** - Create new assessments or use existing ones
+- **Compliance Scoring** - Real-time compliance percentage calculation
+- **Assessment History** - Track compliance over time
+
+### Advanced Features (Both Modes)
 - **Compliance Framework Support** - Filter checks by CIS, PCI-DSS, HIPAA, NIST, GDPR, ISO27001
-- **Compliance Scoring** - Automatic calculation of compliance percentage per framework
-- **Multi-Language Reports** - Generate PDF reports in English or Arabic
 - **CloudFront Detection** - Identifies legitimate public S3 buckets served via CloudFront
 - **Enhanced Findings** - Detailed explanations, remediation steps, and AWS documentation links
 - **Smart Categorization** - Checks organized by Network, Storage, Database, Identity, Compute, etc.
 
-## Security Checks (46 Total)
+## Security Checks (37 Total)
 
 ### Network Security (3 checks)
 1. **EC2 Security Groups Open to Internet** `[CIS, PCI-DSS, HIPAA, NIST]`
@@ -233,6 +243,8 @@ Application runs on `http://localhost:8080`
 
 ## Customer IAM Role Setup
 
+**Authentication Method:** This application uses **cross-account IAM role assumption only**. No AWS credentials (access keys or secrets) are required or stored.
+
 Customers **MUST** create an IAM role named **`SecurityAuditRole`** in their AWS account:
 
 ### Trust Policy (Allow App Runner to assume this role)
@@ -313,11 +325,26 @@ Customers **MUST** create an IAM role named **`SecurityAuditRole`** in their AWS
 
 ## Usage
 
-### Basic Audit
+### Getting Started
+1. Navigate to the application homepage
+2. Click **"Select Audit Mode"** to choose between:
+   - **Security Checks Mode** - Custom security assessments
+   - **Compliance Audit Mode** - AWS Audit Manager integration
+
+**Note:** Both modes only require cross-account IAM role assumption. No AWS credentials are needed - the application assumes a role in your AWS account using STS.
+
+### Security Checks Mode
 1. Customer provides: Account ID (12 digits), Role Name (`SecurityAuditRole`), External ID
 2. Select up to 3 regions and security checks
 3. Click "Run Security Audit"
 4. View results and download PDF report from customer's S3 bucket
+
+### Compliance Audit Mode
+1. Customer provides: Account ID (12 digits), Role Name (`SecurityAuditRole`), External ID, Region
+2. Choose to use existing assessment or create new one
+3. If creating new: Select assessment name and compliance framework
+4. Click "Start Compliance Audit"
+5. View compliance scoring and assessment results
 
 ### Advanced Options
 
@@ -332,6 +359,8 @@ Customers **MUST** create an IAM role named **`SecurityAuditRole`** in their AWS
 - Arabic reports use proper Arabic fonts (Arial/DejaVu Sans)
 
 #### API Usage
+
+**Security Checks Mode:**
 ```bash
 POST /api/audit
 Content-Type: application/json
@@ -344,6 +373,21 @@ Content-Type: application/json
   "selectedChecks": ["EC2_SG_OPEN_0_0_0_0", "S3_PUBLIC_BUCKET", ...],
   "complianceFrameworks": ["CIS", "PCI-DSS", "HIPAA"],
   "reportLanguage": "ar"
+}
+```
+
+**Compliance Audit Mode:**
+```bash
+POST /api/audit/compliance
+Content-Type: application/json
+
+{
+  "accountId": "123456789012",
+  "roleName": "SecurityAuditRole",
+  "externalId": "your-unique-external-id",
+  "region": "us-east-1",
+  "assessmentId": "existing-assessment-id",
+  "createNewAssessment": false
 }
 ```
 
@@ -383,12 +427,21 @@ Content-Type: application/json
 
 ### How It Works
 
+**Secure Cross-Account Access (No Credentials Required):**
+
 1. Customer creates IAM role in their account with trust policy allowing App Runner role
 2. Customer provides Account ID, Role Name (`SecurityAuditRole`), and External ID via web form
-3. App Runner assumes customer's role using STS
-4. Security checks run in customer's account with assumed credentials
+3. App Runner assumes customer's role using AWS STS (Security Token Service)
+4. Security checks run in customer's account with temporary assumed role credentials
 5. PDF report created and stored in customer's S3 bucket
 6. Customer downloads report via presigned S3 URL (expires in 1 hour)
+
+**Security Benefits:**
+- ✅ No AWS access keys or secrets required
+- ✅ No credentials stored in the application
+- ✅ Temporary credentials only (expire automatically)
+- ✅ External ID prevents confused deputy attacks
+- ✅ Customer maintains full control via IAM role permissions
 
 ## Key Improvements & Features
 
@@ -420,6 +473,9 @@ Content-Type: application/json
 
 ## API Endpoints
 
+### `GET /api/audit-modes`
+Returns available audit modes and their features.
+
 ### `GET /api/checks`
 Returns categorized list of all 46 security checks with compliance mappings.
 
@@ -441,7 +497,16 @@ Returns categorized list of all 46 security checks with compliance mappings.
 ```
 
 ### `POST /api/audit`
-Runs security audit with specified parameters.
+Runs security checks audit with specified parameters.
+
+### `POST /api/audit/compliance`
+Runs compliance audit using AWS Audit Manager.
+
+### `GET /api/compliance/assessments`
+Lists available AWS Audit Manager assessments and frameworks.
+
+### `GET /api/compliance/assessment/<assessment_id>`
+Gets detailed information about a specific assessment.
 
 **Request Body:**
 ```json
@@ -510,29 +575,3 @@ Check application logs for detailed error messages:
 aws logs tail /aws/apprunner/SecurityAuditApp --follow
 ```
 
-## Documentation
-
-- **SECURITY_CHECKS_IMPROVEMENTS.md** - Detailed explanation of all check improvements
-- **QUICK_REFERENCE_CHECKS.md** - Quick reference for understanding check logic
-- **ARABIC_PDF_FINAL_FIXES.md** - Arabic language support implementation details
-- **COMPLIANCE_FRAMEWORK_ROADMAP.md** - Multi-tenant architecture design
-
-## Contributing
-
-This is a proprietary tool developed by SUDO Consultants. For feature requests or bug reports, contact the development team.
-
-## License
-
-Proprietary - All rights reserved by SUDO Consultants
-
----
-
-**Powered by SUDO** | AWS Security Audit Tool v2.0
-
-**Latest Updates:**
-- ✅ 46 comprehensive security checks (expanded from 20)
-- ✅ Compliance framework support (CIS, PCI-DSS, HIPAA, NIST, GDPR, ISO27001)
-- ✅ Multi-language PDF reports (English & Arabic)
-- ✅ CloudFront detection for S3 public buckets
-- ✅ Enhanced findings with detailed explanations
-- ✅ Compliance scoring and framework filtering
